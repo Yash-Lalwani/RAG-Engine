@@ -8,6 +8,13 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "psycopg[binary]>=3.2",
+    "openai>=3.20.0",
+    "qdrant-client>=1.19.1",
+    "fastembed>=0.8.1",
+    "docling>=2.130.0",
+    "sentence-transformers>=6.1.0",
+    "voyageai>=0.5.0",
+    "upstash-redis>=1.8.0",
 ]
 
 [dependency-groups]
@@ -31,4 +38,4 @@ ignore = ["E501", "B008"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not integration'"
-markers = ["integration: needs the Docker services (docker compose up -d qdrant postgres)"]
+markers = ["integration: needs Docker services (docker compose up -d qdrant postgres) or model downloads"]

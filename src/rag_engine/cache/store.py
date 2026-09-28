@@ -1,7 +1,7 @@
+"""Key-value cache: Upstash Redis when configured, otherwise an in-process dict."""
+
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import threading
 import time
@@ -12,193 +12,79 @@ from rag_engine.config import settings
 
 logger = logging.getLogger(__name__)
 
-TTL_EMBEDDING = 7 * 24 * 3600
-TTL_INTENT = 24 * 3600
-TTL_SQL_GEN = 24 * 3600
-TTL_SQL_RESULT = 15 * 60
-TTL_ANSWER = 3600
 
+class CacheStore:
+    def __init__(self) -> None:
+        self._redis = self._build_redis_client()
+        self._memory: dict[str, tuple[float, str]] = {}
+        self._stats: dict[str, dict[str, int]] = defaultdict(lambda: {"hits": 0, "misses": 0})
+        self._lock = threading.Lock()
 
-class QueryCacheService:
-    _TIERS = ("intent", "rag_answer", "sql_gen", "sql_result", "embedding")
-
-    def __init__(self):
-        self._redis_client: Any | None = self._build_redis_client()
-        self._memory_store: dict[str, tuple[float, str]] = {}
-        self._stats: dict[str, dict[str, int]] = {
-            tier: defaultdict(int) for tier in self._TIERS
-        }
-        self._lock = threading.RLock()
-
-    def _build_redis_client(self) -> Any | None:
+    @staticmethod
+    def _build_redis_client() -> Any | None:
         if not settings.upstash_redis_rest_url or not settings.upstash_redis_rest_token:
-            logger.info("Redis cache disabled; missing Upstash config")
+            logger.info("Upstash Redis not configured; using the in-memory cache")
             return None
-        try:
-            from upstash_redis import Redis
+        from upstash_redis import Redis
 
-            return Redis(url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token)
-        except Exception:
-            logger.exception("Failed to initialize Redis cache; using in-memory fallback")
-            return None
+        return Redis(url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token)
 
+    def get(self, tier: str, key: str) -> str | None:
+        return self.get_many(tier, [key])[0]
 
-    def _key(self, namespace: str, raw: str) -> str:
-        hashed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
-        return f"{namespace}:{hashed}"
+    def set(self, tier: str, key: str, value: str, ttl_seconds: int) -> None:
+        self.set_many(tier, {key: value}, ttl_seconds)
 
-    def intent_key(self, question: str) -> str:
-        return self._key("intent", question.strip().lower())
-
-    def rag_answer_key(self, question: str, cache_context: dict[str, Any] | None = None) -> str:
-        raw: str | dict[str, Any] = question.strip()
-        if cache_context is not None:
-            raw = {"question": question.strip(), "context": cache_context}
-        return self._key("rag_answer", json.dumps(raw, sort_keys=True) if isinstance(raw, dict) else raw)
-
-    def sql_gen_key(self, question: str) -> str:
-        return self._key("sql_gen", question.strip())
-
-
-    def sql_result_key(self, sql: str) -> str:
-        return self._key("sql_result:v2", " ".join(sql.split()).strip().lower())
-
-    def _record(self, tier: str, field: str) -> None:
+    def get_many(self, tier: str, keys: list[str]) -> list[str | None]:
+        if not keys:
+            return []
+        values = self._redis_get_many(keys) if self._redis else self._memory_get_many(keys)
+        hits = sum(value is not None for value in values)
         with self._lock:
-            self._stats[tier][field] += 1
+            self._stats[tier]["hits"] += hits
+            self._stats[tier]["misses"] += len(keys) - hits
+        return values
 
-    def _get(self, tier: str, key: str) -> str | None:
-        if self._redis_client is not None:
+    def set_many(self, tier: str, items: dict[str, str], ttl_seconds: int) -> None:
+        if not items:
+            return
+        if self._redis:
             try:
-                value = self._redis_client.get(key)
-                if value is not None:
-                    self._record(tier, "hits")
-                    return str(value)
-            except Exception:
-                logger.exception("Redis get failed for tier=%s key=%s", tier, key)
-
-        with self._lock:
-            current = self._memory_store.get(key)
-            if current is None:
-                self._record(tier, "misses")
-                return None
-            expires_at, value = current
-            if expires_at < time.time():
-                del self._memory_store[key]
-                self._record(tier, "misses")
-                return None
-        self._record(tier, "hits")
-        return value
-
-    def _set(self, tier: str, key: str, value: str, ttl_seconds: int) -> None:
-        self._record(tier, "sets")
-        if self._redis_client is not None:
-            try:
-                self._redis_client.set(key, value, ex=ttl_seconds)
+                pipeline = self._redis.pipeline()
+                for key, value in items.items():
+                    pipeline.set(key, value, ex=ttl_seconds)
+                pipeline.exec()
                 return
             except Exception:
-                logger.exception("Redis set failed for tier=%s key=%s", tier, key)
-
+                logger.exception("Redis write failed for tier %s; keeping values in memory", tier)
+        expires_at = time.time() + ttl_seconds
         with self._lock:
-            self._memory_store[key] = (time.time() + ttl_seconds, value)
+            for key, value in items.items():
+                self._memory[key] = (expires_at, value)
 
-    def get_intent(self, question: str) -> str | None:
-        return self._get("intent", self.intent_key(question))
-
-    def set_intent(self, question: str, intent: str) -> None:
-        self._set("intent", self.intent_key(question), intent, TTL_INTENT)
-
-    def get_rag_answer(
-        self,
-        question: str,
-        cache_context: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
-        value = self._get("rag_answer", self.rag_answer_key(question, cache_context))
-        if value is None:
-            return None
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            logger.exception("Invalid rag_answer cache payload")
-            return None
-
-    def set_rag_answer(
-        self,
-        question: str,
-        answer_payload: dict[str, Any],
-        cache_context: dict[str, Any] | None = None,
-    ) -> None:
-        self._set(
-            "rag_answer",
-            self.rag_answer_key(question, cache_context),
-            json.dumps(answer_payload),
-            TTL_ANSWER,
-        )
-
-    def get_sql_generation(self, question: str) -> str | None:
-        return self._get("sql_gen", self.sql_gen_key(question))
-
-    def set_sql_generation(self, question: str, sql: str) -> None:
-        self._set("sql_gen", self.sql_gen_key(question), sql, TTL_SQL_GEN)
-
-    def get_sql_result(self, sql: str) -> list[dict[str, Any]] | None:
-        value = self._get("sql_result", self.sql_result_key(sql))
-        if value is None:
-            return None
-        try:
-            parsed = json.loads(value)
-            return parsed if isinstance(parsed, list) else None
-        except json.JSONDecodeError:
-            logger.exception("Invalid sql_result cache payload")
-            return None
-
-    def set_sql_result(self, sql: str, rows: list[dict[str, Any]]) -> None:
-        self._set(
-            "sql_result",
-            self.sql_result_key(sql),
-            json.dumps(rows),
-            TTL_SQL_RESULT,
-        )
-
-    def embedding_key(self, text: str) -> str:
-        return self._key("embedding", text)
-
-    def get_embedding(self, text: str) -> list[float] | None:
-        value = self._get("embedding", self.embedding_key(text))
-        if value is None:
-            return None
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, list):
-                return parsed
-        except json.JSONDecodeError:
-            logger.exception("Invalid embedding cache payload")
-        return None
-
-    def set_embedding(self, text: str, vector: list[float]) -> None:
-        self._set(
-            "embedding",
-            self.embedding_key(text),
-            json.dumps(vector),
-            TTL_EMBEDDING,
-        )
-
-    def stats(self) -> dict[str, dict[str, float | int]]:
-        snapshot: dict[str, dict[str, float | int]] = {}
+    def stats(self) -> dict[str, dict[str, int]]:
         with self._lock:
-            for tier in self._TIERS:
-                hits = int(self._stats[tier]["hits"])
-                misses = int(self._stats[tier]["misses"])
-                sets = int(self._stats[tier]["sets"])
-                total = hits + misses
-                hit_rate = (hits / total) if total else 0.0
-                snapshot[tier] = {
-                    "hits": hits,
-                    "misses": misses,
-                    "sets": sets,
-                    "hit_rate": hit_rate,
-                }
-        return snapshot
+            return {tier: dict(counts) for tier, counts in self._stats.items()}
+
+    def _redis_get_many(self, keys: list[str]) -> list[str | None]:
+        try:
+            return [None if value is None else str(value) for value in self._redis.mget(*keys)]
+        except Exception:
+            logger.exception("Redis read failed; falling back to the in-memory cache")
+            return self._memory_get_many(keys)
+
+    def _memory_get_many(self, keys: list[str]) -> list[str | None]:
+        now = time.time()
+        values: list[str | None] = []
+        with self._lock:
+            for key in keys:
+                entry = self._memory.get(key)
+                if entry is None or entry[0] < now:
+                    self._memory.pop(key, None)
+                    values.append(None)
+                else:
+                    values.append(entry[1])
+        return values
 
 
-query_cache = QueryCacheService()
+cache = CacheStore()

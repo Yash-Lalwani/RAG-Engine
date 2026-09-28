@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8000
     docling_device: str = "auto"
+    ingest_dir: str = "data"
 
     @property
     def api_key_callers(self) -> dict[str, str]:

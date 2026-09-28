@@ -1,19 +1,24 @@
-import logging
+from functools import lru_cache
 
 from docling.chunking import HybridChunker
 from docling_core.types.doc import DoclingDocument
 
-logger = logging.getLogger(__name__)
+
+@lru_cache
+def _chunker() -> HybridChunker:
+    return HybridChunker()
 
 
-def chunk_document(doc: DoclingDocument, source_name: str) -> list[dict]:
+def chunk_document(doc: DoclingDocument) -> list[dict]:
+    """Split a parsed document into chunks: {"text": ..., "page_number": int | None}."""
     chunks = []
-    for chunk in HybridChunker().chunk(doc):
-        meta = {"text": chunk.text, "source": source_name}
-        if hasattr(chunk, "meta") and hasattr(chunk.meta, "doc_items"):
-            items = chunk.meta.doc_items
-            if items and hasattr(items[0], "prov") and items[0].prov:
-                meta["page_number"] = items[0].prov[0].page_no
-        chunks.append(meta)
-    logger.info("Processed %d chunks from %s", len(chunks), source_name)
+    for chunk in _chunker().chunk(doc):
+        text = chunk.text.strip()
+        if not text:
+            continue
+        page_number = None
+        items = getattr(chunk.meta, "doc_items", None)
+        if items and items[0].prov:
+            page_number = items[0].prov[0].page_no
+        chunks.append({"text": text, "page_number": page_number})
     return chunks

@@ -1,99 +1,55 @@
-import logging
-from typing import cast
+"""Rerank passages with a local cross-encoder (default) or the Voyage API."""
+
+from functools import lru_cache
+from typing import Literal
 
 from rag_engine.config import settings
-from rag_engine.models import RetrievedChunk
+from rag_engine.models import EngineError, Passage, RerankedPassage
 
-logger = logging.getLogger(__name__)
-
-
-class Reranker:
-    def __init__(self) -> None:
-        self.backend = settings.reranker_backend
-        self._local_model: object | None = None
-        self._voyage_client: object | None = None
-
-    def _load_local_model(self) -> object:
-        if self._local_model is None:
-            from sentence_transformers import CrossEncoder
-
-            self._local_model = CrossEncoder(settings.reranker_model)
-        return self._local_model
-
-    def _load_voyage_client(self) -> object:
-        if self._voyage_client is None:
-            import voyageai
-
-            if not settings.voyage_api_key:
-                raise ValueError("Voyage API key is required for voyage reranker backend")
-            self._voyage_client = voyageai.Client(api_key=settings.voyage_api_key)
-        return self._voyage_client
+RerankBackend = Literal["local", "voyage"]
 
 
-    def rerank(
-        self,
-        query: str,
-        chunks: list[RetrievedChunk],
-        top_k: int | None = None,
-    ) -> list[RetrievedChunk]:
-        if not chunks:
-            return []
+@lru_cache
+def _cross_encoder():
+    from sentence_transformers import CrossEncoder
 
-        top_k = top_k or settings.reranker_initial_top_k
-        top_k = min(top_k, len(chunks))
-
-        try:
-            if self.backend == "voyage":
-                return self._rerank_voyage(query, chunks, top_k)
-            return self._rerank_local(query, chunks, top_k)
-        except Exception:
-            logger.exception("Reranking failed, returning original order")
-            return chunks[:top_k]
+    return CrossEncoder(settings.reranker_model)
 
 
-    def _rerank_local(
-        self,
-        query: str,
-        chunks: list[RetrievedChunk],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        model = self._load_local_model()
-        pairs = [[query, chunk.text] for chunk in chunks]
-        scores = cast("list[float]", model.predict(pairs))
+@lru_cache
+def _voyage_client():
+    if not settings.voyage_api_key:
+        raise EngineError("The voyage reranker needs VOYAGE_API_KEY")
+    import voyageai
 
-        scored = [
-            RetrievedChunk(text=chunk.text, source=chunk.source, score=float(score))
-            for chunk, score in zip(chunks, scores, strict=True)
-        ]
-        scored.sort(key=lambda x: x.score, reverse=True)
-        return scored[:top_k]
+    return voyageai.Client(api_key=settings.voyage_api_key)
 
 
-    def _rerank_voyage(
-        self,
-        query: str,
-        chunks: list[RetrievedChunk],
-        top_k: int,
-    ) -> list[RetrievedChunk]:
-        client = self._load_voyage_client()
-        documents = [chunk.text for chunk in chunks]
-        result = client.rerank(
-            query=query,
-            documents=documents,
-            model=settings.voyage_model,
-            top_k=top_k,
-        )
+def rerank(
+    query: str,
+    passages: list[Passage],
+    top_k: int | None = None,
+    backend: RerankBackend = "local",
+) -> list[RerankedPassage]:
+    """Score every passage against the query and return the best `top_k`, highest first."""
+    if not passages:
+        return []
+    texts = [p.text for p in passages]
+    scores = _voyage_scores(query, texts) if backend == "voyage" else _local_scores(query, texts)
+    ranked = sorted(zip(passages, scores, strict=True), key=lambda pair: pair[1], reverse=True)
+    return [
+        RerankedPassage(**passage.model_dump(), score=score)
+        for passage, score in ranked[: top_k or len(passages)]
+    ]
 
-        # Map results back to RetrievedChunk
-        reranked: list[RetrievedChunk] = []
-        for item in result.results:
-            idx = item.index
-            chunk = chunks[idx]
-            reranked.append(
-                RetrievedChunk(
-                    text=chunk.text,
-                    source=chunk.source,
-                    score=float(item.relevance_score),
-                )
-            )
-        return reranked
+
+def _local_scores(query: str, texts: list[str]) -> list[float]:
+    return [float(s) for s in _cross_encoder().predict([(query, text) for text in texts])]
+
+
+def _voyage_scores(query: str, texts: list[str]) -> list[float]:
+    result = _voyage_client().rerank(query=query, documents=texts, model=settings.voyage_model)
+    scores = [0.0] * len(texts)
+    for item in result.results:
+        scores[item.index] = float(item.relevance_score)
+    return scores

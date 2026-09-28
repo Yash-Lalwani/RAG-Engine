@@ -1,22 +1,10 @@
-from rag_engine.models import RetrievedChunk
+def rrf_fuse(ranked_lists: list[list[str]], rrf_k: int = 60) -> list[tuple[str, float]]:
+    """Reciprocal Rank Fusion: score(d) = sum over lists of 1 / (rrf_k + rank), rank from 1.
 
-
-def fuse_rrf(
-    result_lists: list[list[RetrievedChunk]],
-    rrf_k: int = 60,
-) -> list[RetrievedChunk]:
-    """Fuse multiple ranked result lists using Reciprocal Rank Fusion."""
+    Returns (id, score) pairs, best first. Ties keep the order in which ids were first seen.
+    """
     scores: dict[str, float] = {}
-    meta: dict[str, dict] = {}
-
-    for result_list in result_lists:
-        for rank, chunk in enumerate(result_list):
-            key = chunk.text
-            scores[key] = scores.get(key, 0.0) + 1.0 / (rrf_k + rank + 1)
-            if key not in meta:
-                meta[key] = {"text": chunk.text, "source": chunk.source}
-
-    return [
-        RetrievedChunk(text=text, source=meta[text]["source"], score=score)
-        for text, score in sorted(scores.items(), key=lambda x: x[1], reverse=True)
-    ]
+    for ranked in ranked_lists:
+        for rank, item_id in enumerate(ranked, start=1):
+            scores[item_id] = scores.get(item_id, 0.0) + 1.0 / (rrf_k + rank)
+    return sorted(scores.items(), key=lambda pair: pair[1], reverse=True)

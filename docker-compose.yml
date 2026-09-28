@@ -1,0 +1,32 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.17.0
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/sql:/sql:ro
+      - ./data/sql/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      # -h localhost: the temporary server used during init only listens on a socket,
+      # so this stays unhealthy until the demo data has finished loading.
+      test: ["CMD-SHELL", "pg_isready -h localhost -U rag -d rag_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres_data:
+  qdrant_data:

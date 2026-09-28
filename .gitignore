@@ -1,0 +1,39 @@
+# Local working notes
+CLAUDE.md
+RAG_ENGINE_PLAN.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
+
+# Generated data
+data/noise/
+
+# Eval results (only the summary is committed)
+eval/results/*
+!eval/results/summary.md

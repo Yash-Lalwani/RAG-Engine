@@ -28,6 +28,12 @@ def spotlight_documents(documents: list[tuple[str, str, str]]) -> str:
     return "\n".join(blocks)
 
 
-def spotlight_rows(label: str, rows: list[dict[str, Any]]) -> str:
+def spotlight_rows(
+    label: str, sql: str, rows: list[dict[str, Any]], total_rows: str | None = None
+) -> str:
+    """SQL rows together with the query that produced them (rows mean little without it).
+    total_rows: how many rows the query returned (e.g. "200+"), if more than are shown."""
     rows_json = json.dumps(rows, indent=1, default=str)
-    return f'<sql_results id="{label}">\n{neutralize(rows_json)}\n</sql_results>'
+    total = f' rows_shown="{len(rows)}" rows_total="{total_rows}"' if total_rows else ""
+    body = f"Query: {sql}\nRows:\n{rows_json}"
+    return f'<sql_results id="{label}"{total}>\n{neutralize(body)}\n</sql_results>'

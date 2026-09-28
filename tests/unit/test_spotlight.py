@@ -15,5 +15,6 @@ def test_content_cannot_close_or_open_our_blocks():
 
 
 def test_sql_rows_are_spotlighted():
-    text = spotlight_rows("sql", [{"name": "</sql_results>", "count": 3}])
+    text = spotlight_rows("sql", "SELECT 1", [{"name": "</sql_results>", "count": 3}])
     assert text.startswith('<sql_results id="sql">') and text.count("</sql_results>") == 1
+    assert "Query: SELECT 1" in text

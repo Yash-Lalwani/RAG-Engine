@@ -16,6 +16,9 @@ dependencies = [
     "voyageai>=0.5.0",
     "upstash-redis>=1.8.0",
     "tavily-python>=0.8.4",
+    "langgraph>=1.2.12",
+    "langgraph-checkpoint-postgres>=3.1.2",
+    "sqlglot>=30.20.0",
 ]
 
 [dependency-groups]

@@ -192,6 +192,19 @@ class VerificationResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class SqlDraft(BaseModel):
+    sql: str
+    explanation: str
+
+
+class SqlResult(BaseModel):
+    sql: str
+    columns: list[str]
+    rows: list[dict[str, Any]]
+    row_count: int
+    truncated: bool
+
+
 class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -201,3 +214,52 @@ class TokenUsage(BaseModel):
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+
+class ChunkPreview(BaseModel):
+    id: str
+    doc_id: str
+    source: str
+    text: str  # first 300 characters
+    fused_score: float
+    rerank_score: float | None = None
+    grade: str | None = None
+    grade_score: float | None = None
+    url: str | None = None
+
+
+class SelfRagInfo(BaseModel):
+    first_score: float | None = None
+    retry_score: float | None = None
+    retried: bool = False
+    kept: Literal["first", "retry"] = "first"
+    retry_query: str | None = None
+
+
+class AskMetadata(BaseModel):
+    cache_hit: bool = False
+    cache: dict[str, dict[str, int]] = Field(default_factory=dict)
+    timings_ms: dict[str, float] = Field(default_factory=dict)
+    search: SearchInfo | None = None
+    self_rag: SelfRagInfo | None = None
+    sql_row_count: int | None = None
+    sql_truncated: bool = False
+    token_usage: TokenUsage = Field(default_factory=TokenUsage)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AskResult(BaseModel):
+    status: Literal["completed", "pending_sql", "blocked", "error"]
+    query_id: str
+    intent: Literal["rag", "sql", "hybrid"] | None = None
+    answer: str = ""
+    statements: list[Statement] = Field(default_factory=list)
+    sources: list[Source] = Field(default_factory=list)
+    chunks: list[ChunkPreview] = Field(default_factory=list)
+    sql: str | None = None
+    sql_explanation: str | None = None
+    rows_preview: list[dict[str, Any]] = Field(default_factory=list)
+    verification: VerificationResult | None = None
+    insufficient_context: bool = False
+    message: str | None = None
+    metadata: AskMetadata = Field(default_factory=AskMetadata)

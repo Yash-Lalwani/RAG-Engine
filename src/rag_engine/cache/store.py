@@ -6,11 +6,29 @@ import logging
 import threading
 import time
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from rag_engine.config import settings
 
 logger = logging.getLogger(__name__)
+
+_request_counts: ContextVar[dict[str, dict[str, int]] | None] = ContextVar(
+    "request_cache_counts", default=None
+)
+
+
+@contextmanager
+def track_cache() -> Iterator[dict[str, dict[str, int]]]:
+    """Count cache hits and misses per tier for everything inside the `with` block."""
+    counts: dict[str, dict[str, int]] = {}
+    token = _request_counts.set(counts)
+    try:
+        yield counts
+    finally:
+        _request_counts.reset(token)
 
 
 class CacheStore:
@@ -43,6 +61,11 @@ class CacheStore:
         with self._lock:
             self._stats[tier]["hits"] += hits
             self._stats[tier]["misses"] += len(keys) - hits
+        request_counts = _request_counts.get()
+        if request_counts is not None:
+            tier_counts = request_counts.setdefault(tier, {"hits": 0, "misses": 0})
+            tier_counts["hits"] += hits
+            tier_counts["misses"] += len(keys) - hits
         return values
 
     def set_many(self, tier: str, items: dict[str, str], ttl_seconds: int) -> None:

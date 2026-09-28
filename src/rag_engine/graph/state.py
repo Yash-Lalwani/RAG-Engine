@@ -1,40 +1,64 @@
+"""State of one ask() run. Every key a node returns must be declared here: LangGraph silently
+drops undeclared keys. Values are plain JSON data so checkpoints stay simple."""
+
 from operator import add
-from typing import Annotated, TypedDict
-
-from rag_engine.models import CRAGEvaluation, ReflectionResult, RetrievedChunk
+from typing import Annotated, Any, TypedDict
 
 
-class GraphState(TypedDict):
+def add_numbers(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Reducer that sums nested dicts of numbers, e.g. token counts from several nodes."""
+    merged = dict(left or {})
+    for key, value in (right or {}).items():
+        if isinstance(value, dict):
+            merged[key] = add_numbers(merged.get(key, {}), value)
+        else:
+            merged[key] = merged.get(key, 0) + value
+    return merged
+
+
+class AskState(TypedDict, total=False):
+    # Input, set by ask()
+    query_id: str
+    caller: str
+    created_at: str
+    collection_id: str
     question: str
-    user_id: str
-    flags: dict
+    options: dict[str, Any]
+    filters: dict[str, Any]
+    settings: dict[str, Any]
 
-    intent: str | None
+    # Routing and retrieval
+    intent: str
+    search_query: str
+    chunks: list[dict[str, Any]]
+    search_info: dict[str, Any]
 
-    generated_sql: str | None
+    # Text2SQL
+    sql: str | None
     sql_explanation: str | None
+    sql_error: str | None
     sql_approved: bool | None
-    sql_rows: list[dict] | None
-    sql_cache_hit: bool
+    sql_rows: list[dict[str, Any]]
+    sql_row_count: int
+    sql_truncated: bool
 
+    # Answer, Self-RAG and verification
+    answer: dict[str, Any]
+    answer_check: dict[str, Any] | None
+    retries: int
+    first_attempt: dict[str, Any] | None
+    self_rag: dict[str, Any] | None
+    verification: dict[str, Any] | None
 
-    hypotheses: list[str]
-    retrieved_chunks: Annotated[list[RetrievedChunk], add]
-    reranked_chunks: list[RetrievedChunk] | None
-    spotlighted_context: str | None
-    crag_evaluation: CRAGEvaluation | None
-    web_results: list[RetrievedChunk]
-    rag_cache_hit: bool
+    # Output, set by finalize
+    status: str
+    message: str | None
+    final_answer: str
+    final_statements: list[dict[str, Any]]
+    sources: list[dict[str, Any]]
 
-    raw_answer: str | None
-    reflection: ReflectionResult | None
-    reflection_iterations: int
-    refined_question: str | None
-
-    final_answer: str | None
-    sources: list[str]
-    confidence: float | None
-    chunk_previews: list[dict]
-
-    cache_hits: dict[str, bool]
-    cost_saved_usd: float
+    # Bookkeeping, added up across nodes (and across the pause for approval)
+    warnings: Annotated[list[str], add]
+    usage: Annotated[dict[str, int], add_numbers]
+    cache: Annotated[dict[str, dict[str, int]], add_numbers]
+    timings_ms: Annotated[dict[str, float], add_numbers]

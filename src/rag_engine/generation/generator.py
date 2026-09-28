@@ -1,34 +1,32 @@
 """generate_answer(): a structured, cited answer from spotlighted chunks (and SQL rows)."""
 
-import json
-from typing import Any
-
 from rag_engine import llm
 from rag_engine.config import settings
 from rag_engine.generation import prompts
 from rag_engine.guardrails.spotlight import spotlight_documents, spotlight_rows
-from rag_engine.models import CitedAnswer, Passage, SearchChunk, Source, Statement
+from rag_engine.models import CitedAnswer, Passage, SearchChunk, Source, SqlResult, Statement
 
 SQL_SOURCE_ID = "sql_results"
+LLM_ROWS = 50  # rows shown to the LLM; the total count is always included
 NO_CONTEXT_TEXT = "The available documents do not contain enough information to answer this question."
 
 
 def generate_answer(
     question: str,
     chunks: list[SearchChunk],
-    sql_rows: list[dict[str, Any]] | None = None,
+    sql_result: SqlResult | None = None,
     domain_description: str = "",
 ) -> CitedAnswer:
-    if not chunks and not sql_rows:
+    if not chunks and sql_result is None:
         return CitedAnswer(
             statements=[Statement(text=NO_CONTEXT_TEXT, chunk_ids=[])], insufficient_context=True
         )
 
     labels = {f"c{n}": chunk.id for n, chunk in enumerate(chunks, start=1)}
     context = spotlight_documents([(f"c{n}", c.source, c.text) for n, c in enumerate(chunks, start=1)])
-    if sql_rows:
+    if sql_result is not None:
         labels["sql"] = SQL_SOURCE_ID
-        context += "\n\n" + spotlight_rows("sql", sql_rows)
+        context += "\n\n" + _sql_block(sql_result)
 
     raw = llm.generate_structured(
         prompts.answer_system(domain_description),
@@ -62,13 +60,21 @@ def render_answer(
 
 
 def citation_passages(
-    chunks: list[SearchChunk], sql_rows: list[dict[str, Any]] | None = None
+    chunks: list[SearchChunk], sql_result: SqlResult | None = None
 ) -> list[Passage]:
     """The passages a generated answer may cite, in the form verify_citations expects."""
     passages = [Passage(id=chunk.id, text=chunk.text) for chunk in chunks]
-    if sql_rows:
-        passages.append(Passage(id=SQL_SOURCE_ID, text=json.dumps(sql_rows, default=str)))
+    if sql_result is not None:
+        passages.append(Passage(id=SQL_SOURCE_ID, text=_sql_block(sql_result)))
     return passages
+
+
+def _sql_block(result: SqlResult) -> str:
+    """The query, up to LLM_ROWS rows, and the total count when more rows exist."""
+    total = None
+    if result.row_count > LLM_ROWS or result.truncated:
+        total = f"{result.row_count}{'+' if result.truncated else ''}"
+    return spotlight_rows("sql", result.sql, result.rows[:LLM_ROWS], total)
 
 
 def _known_ids(chunk_labels: list[str], labels: dict[str, str]) -> list[str]:

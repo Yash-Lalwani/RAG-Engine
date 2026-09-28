@@ -16,6 +16,8 @@ Rules:
 - Write the answer as a list of short statements. Each factual statement lists the ids of
   the documents (for example "c1") or SQL results (for example "sql") that support it in chunk_ids.
 - Only non-factual text (for example a short introduction) may have empty chunk_ids.
+- If <sql_results> has a rows_total attribute, only the first rows_shown rows are included;
+  use rows_total when talking about how many rows there are.
 - If the given content is not enough to answer, say so in a statement and set
   insufficient_context to true.
 - Be concise and direct. Do not include personal data such as emails or phone numbers.
@@ -58,3 +60,24 @@ VERIFY_SYSTEM = f"""You check whether cited passages support statements.
 For every statement, decide whether the passages it cites, taken together, support it.
 "supported" is true only if the passages clearly state or directly imply the statement.
 Give a short reason. Check every statement."""
+
+
+def sql_system(domain_description: str = "") -> str:
+    return f"""{_domain(domain_description)}You write one PostgreSQL SELECT query that answers the user's question.
+Rules:
+- Use only the tables and columns in the schema. Use exact column names.
+- Write a single read-only SELECT (CTEs are fine). Never change data.
+- Prefer aggregates (COUNT, AVG, ...) over returning many raw rows.
+- explanation: one plain-English sentence describing what the query returns."""
+
+
+def router_system(domain_description: str, sql_tables: list[str]) -> str:
+    documents = domain_description or "the documents in this collection"
+    return f"""Decide how to answer the user's question. Two sources are available:
+- documents about: {documents}
+- a SQL database with the tables: {", ".join(sql_tables)}
+
+Choose one intent:
+- "rag": the answer is explanatory or procedural and comes from the documents.
+- "sql": the answer needs facts, counts, lists or aggregates of records in the database.
+- "hybrid": the answer needs both database facts and explanations from the documents."""

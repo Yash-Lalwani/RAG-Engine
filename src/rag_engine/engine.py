@@ -9,9 +9,10 @@ from typing import Any
 from langgraph.types import Command
 from pydantic import ValidationError
 
-from rag_engine import collections, config
+from rag_engine import collections, config, db
 from rag_engine.cache.keys import ANSWER_TIER, ANSWER_TTL, answer_key
 from rag_engine.cache.store import cache, track_cache
+from rag_engine.grading import citations
 from rag_engine.graph.builder import get_graph
 from rag_engine.guardrails.input_checks import guard_input
 from rag_engine.guardrails.output_checks import guard_answer
@@ -26,18 +27,21 @@ from rag_engine.models import (
     DeleteResult,
     DocumentRecord,
     EngineError,
+    HealthStatus,
     IngestResult,
     Passage,
     RerankedPassage,
     SearchInfo,
     SearchResult,
     SelfRagInfo,
+    Statement,
     TokenUsage,
+    VerificationResult,
     validation_message,
 )
+from rag_engine.retrieval import embeddings, vector_store
 from rag_engine.retrieval import rerank as rerank_module
 from rag_engine.retrieval import search as search_module
-from rag_engine.retrieval import vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,28 @@ def setup() -> None:
     vector_store.ensure_collection()
     get_graph()
     delete_expired_runs()
+
+
+def health() -> HealthStatus:
+    """Check Postgres, Qdrant and Redis. Makes no paid API calls."""
+    postgres, qdrant, redis = db.ping(), vector_store.ping(), cache.ping()
+    healthy = postgres and qdrant and redis != "error"
+    return HealthStatus(status="ok" if healthy else "degraded", postgres=postgres, qdrant=qdrant, redis=redis)
+
+
+def warm_up() -> None:
+    """Load the local models (reranker, BM25, guardrail classifiers) so the first request is not slow.
+    Makes no paid API calls; a model that cannot load is only logged."""
+    steps = {
+        "reranker": lambda: rerank_module.rerank("warm up", [Passage(id="w", text="warm up")]),
+        "BM25": lambda: embeddings.embed_sparse_query("warm up"),
+        "guardrail classifiers": lambda: guard_input("warm up"),
+    }
+    for name, step in steps.items():
+        try:
+            step()
+        except Exception as exc:
+            logger.warning("Could not warm up the %s: %s", name, exc)
 
 
 def create_collection(
@@ -310,6 +336,20 @@ def _is_expired(created_at: str) -> bool:
 
 def _thread(query_id: str) -> dict[str, Any]:
     return {"configurable": {"thread_id": query_id}}
+
+
+def verify_citations(
+    statements: list[Statement | dict[str, Any]],
+    passages: list[Passage | dict[str, Any]],
+    strict: bool = False,
+) -> VerificationResult:
+    """Check caller-supplied statements against caller-supplied passages (see grading/citations.py)."""
+    try:
+        parsed_statements = [Statement.model_validate(s) for s in statements]
+        parsed_passages = [Passage.model_validate(p) for p in passages]
+    except ValidationError as error:
+        raise EngineError(f"Invalid input: {validation_message(error)}") from None
+    return citations.verify_citations(parsed_statements, parsed_passages, strict)
 
 
 def _check_sql_database(settings: CollectionSettings) -> None:

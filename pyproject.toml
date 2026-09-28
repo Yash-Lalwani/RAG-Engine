@@ -20,6 +20,10 @@ dependencies = [
     "langgraph-checkpoint-postgres>=3.1.2",
     "sqlglot>=30.20.0",
     "transformers>=5.17.0",
+    "mcp>=2.2",
+    "uvicorn>=0.54.0",
+    "torch>=2.14.0",
+    "torchvision>=0.29.0",
 ]
 
 [dependency-groups]
@@ -48,3 +52,14 @@ markers = [
     "integration: needs Docker services (docker compose up -d qdrant postgres) or model downloads",
     "llm: calls the OpenAI API (needs OPENAI_API_KEY, costs a little)",
 ]
+
+# Linux (the Docker image) uses CPU-only torch; the default Linux build pulls in ~19 CUDA packages.
+# torchvision must come from the same index, or it does not match the CPU torch build.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

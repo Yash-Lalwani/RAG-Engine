@@ -25,6 +25,14 @@ def get_client() -> QdrantClient:
     return QdrantClient(url=settings.qdrant_url, timeout=30)
 
 
+def ping() -> bool:
+    try:
+        get_client().get_collections()
+        return True
+    except Exception:
+        return False
+
+
 def point_id(collection_id: str, doc_id: str, chunk_index: int) -> str:
     return str(uuid.uuid5(_POINT_ID_NAMESPACE, f"{collection_id}/{doc_id}/{chunk_index}"))
 

@@ -112,6 +112,13 @@ class DeleteResult(BaseModel):
     deleted: bool = True
 
 
+class HealthStatus(BaseModel):
+    status: Literal["ok", "degraded"]
+    postgres: bool
+    qdrant: bool
+    redis: Literal["ok", "not configured", "error"]
+
+
 class Passage(BaseModel):
     id: str
     text: str

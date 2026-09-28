@@ -1,0 +1,13 @@
+.env
+.env.*
+.git
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+dev
+eval
+tests
+CLAUDE.md
+RAG_ENGINE_PLAN.md

@@ -58,6 +58,16 @@ class CacheStore:
 
         return Redis(url=settings.upstash_redis_rest_url, token=settings.upstash_redis_rest_token)
 
+    def ping(self) -> str:
+        """"ok", "not configured" (in-memory fallback) or "error"."""
+        if self._redis is None:
+            return "not configured"
+        try:
+            self._redis.ping()
+            return "ok"
+        except Exception:
+            return "error"
+
     def get(self, tier: str, key: str) -> str | None:
         return self.get_many(tier, [key])[0]
 

@@ -15,6 +15,7 @@ dependencies = [
     "sentence-transformers>=6.1.0",
     "voyageai>=0.5.0",
     "upstash-redis>=1.8.0",
+    "tavily-python>=0.8.4",
 ]
 
 [dependency-groups]
@@ -37,5 +38,8 @@ ignore = ["E501", "B008"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not integration'"
-markers = ["integration: needs Docker services (docker compose up -d qdrant postgres) or model downloads"]
+addopts = "-m 'not integration and not llm'"
+markers = [
+    "integration: needs Docker services (docker compose up -d qdrant postgres) or model downloads",
+    "llm: calls the OpenAI API (needs OPENAI_API_KEY, costs a little)",
+]

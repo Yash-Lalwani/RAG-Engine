@@ -1,4 +1,4 @@
-"""search(): dense and/or BM25 legs -> RRF fusion -> rerank."""
+"""search(): (HyDE) -> dense and/or BM25 legs -> RRF fusion -> rerank -> CRAG grading."""
 
 import logging
 import time
@@ -7,6 +7,7 @@ from typing import Any
 from qdrant_client.models import ScoredPoint
 
 from rag_engine import collections
+from rag_engine.grading.crag import apply_crag
 from rag_engine.models import (
     CollectionSettings,
     EngineError,
@@ -15,7 +16,7 @@ from rag_engine.models import (
     SearchInfo,
     SearchResult,
 )
-from rag_engine.retrieval import embeddings, vector_store
+from rag_engine.retrieval import embeddings, hyde, vector_store
 from rag_engine.retrieval.fusion import rrf_fuse
 from rag_engine.retrieval.rerank import rerank
 
@@ -43,13 +44,14 @@ def search(
         collection_id, metadata_filters=check_filters(filters, config.filterable_fields)
     )
 
+    info = SearchInfo(mode=config.search_mode)
     timings: dict[str, float] = {}
     ranked_lists: list[list[str]] = []
     payloads: dict[str, dict[str, Any]] = {}
 
     if config.search_mode in ("dense", "hybrid"):
         leg_started = time.perf_counter()
-        vector = embeddings.embed_dense([query])[0]
+        vector = _dense_query_vector(query, config, info)
         hits = vector_store.query(vector, vector_store.DENSE_VECTOR, query_filter, config.fetch_k)
         ranked_lists.append(_collect(hits, payloads))
         timings["dense_ms"] = _ms_since(leg_started)
@@ -67,23 +69,45 @@ def search(
 
     fused = rrf_fuse(ranked_lists, config.rrf_k)[: config.fetch_k]
     chunks = [_to_chunk(pid, score, payloads[pid]) for pid, score in fused]
+    info.candidates = len(chunks)
 
-    info = SearchInfo(mode=config.search_mode, candidates=len(chunks))
     if config.rerank and chunks:
-        rerank_started = time.perf_counter()
+        step_started = time.perf_counter()
         try:
             chunks = _rerank_chunks(query, chunks, config)
             info.reranked = True
         except Exception as exc:
             logger.warning("Reranking failed, keeping fused order: %s", exc)
-            info.rerank_error = str(exc)
-        timings["rerank_ms"] = _ms_since(rerank_started)
+            info.warnings.append(f"Reranking failed: {exc}")
+        timings["rerank_ms"] = _ms_since(step_started)
+    chunks = chunks[: config.top_k]
+
+    if config.crag:
+        step_started = time.perf_counter()
+        outcome = apply_crag(query, chunks, config.crag_threshold, config.crag_web_fallback)
+        chunks = outcome.chunks
+        info.crag_action = outcome.action
+        info.web_used = outcome.web_used
+        info.insufficient_context = outcome.insufficient_context
+        info.warnings.extend(outcome.warnings)
+        timings["crag_ms"] = _ms_since(step_started)
 
     timings["total_ms"] = _ms_since(started)
     info.timings_ms = timings
-    return SearchResult(
-        collection_id=collection_id, query=query, chunks=chunks[: config.top_k], info=info
-    )
+    return SearchResult(collection_id=collection_id, query=query, chunks=chunks, info=info)
+
+
+def _dense_query_vector(query: str, config: CollectionSettings, info: SearchInfo) -> list[float]:
+    """HyDE vector if enabled (falls back to the plain query on failure), else the query embedding."""
+    if config.hyde:
+        try:
+            vector = hyde.hyde_vector(query, config.domain_description)
+            info.hyde_used = True
+            return vector
+        except Exception as exc:
+            logger.warning("HyDE failed, using the plain query: %s", exc)
+            info.warnings.append(f"HyDE failed: {exc}")
+    return embeddings.embed_dense([query])[0]
 
 
 def check_filters(

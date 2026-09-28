@@ -39,7 +39,7 @@ def make_collection():
 
     def _make(settings: dict | None = None) -> str:
         collection_id = f"test-{uuid.uuid4().hex[:8]}"
-        engine.create_collection(collection_id, "Test", settings={"rerank": False, **(settings or {})})
+        engine.create_collection(collection_id, "Test", settings={"rerank": False, "crag": False, **(settings or {})})
         created.append(collection_id)
         return collection_id
 

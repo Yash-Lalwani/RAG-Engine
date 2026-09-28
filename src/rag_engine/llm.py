@@ -1,56 +1,85 @@
+"""OpenAI chat calls (plain text and structured outputs) with per-request token counting."""
+
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import lru_cache
+
 from openai import OpenAI
+from pydantic import BaseModel
 
 from rag_engine.config import settings
+from rag_engine.models import EngineError, TokenUsage
 
-openai_client = OpenAI(api_key=settings.openai_api_key)
+_current_usage: ContextVar[TokenUsage | None] = ContextVar("current_usage", default=None)
 
 
-def generate(system_prompt: str, user_message: str, model: str | None = None, temperature: float = 0.0) -> dict:
-    if model is None:
-        model = settings.llm_model_strong
+@contextmanager
+def track_usage() -> Iterator[TokenUsage]:
+    """Count the tokens of every LLM call made inside the `with` block."""
+    usage = TokenUsage()
+    token = _current_usage.set(usage)
+    try:
+        yield usage
+    finally:
+        _current_usage.reset(token)
 
-    response = openai_client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
-        temperature=temperature,
-    )
 
-    text = response.choices[0].message.content or ""
+@lru_cache
+def _client() -> OpenAI:
+    if not settings.openai_api_key:
+        raise EngineError("OPENAI_API_KEY is not set")
+    return OpenAI(api_key=settings.openai_api_key)
 
-    usage = {
-        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-        "total_tokens": response.usage.total_tokens if response.usage else 0,
-    }
 
-    return {"text": text, "usage": usage}
-
-def generate_with_json(
-    system_prompt: str,
-    user_message: str,
+def generate_text(
+    system: str,
+    user: str,
     model: str | None = None,
     temperature: float = 0.0,
-) -> dict:
-
-    if model is None:
-        model = settings.llm_model_small
-
-    response = openai_client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ],
+    n: int = 1,
+) -> list[str]:
+    """Return `n` completions (one API call; `n > 1` bills the prompt only once)."""
+    response = _client().chat.completions.create(
+        model=model or settings.llm_model_strong,
+        messages=_messages(system, user),
         temperature=temperature,
-        response_format={"type": "json_object"},
+        n=n,
     )
-    text = response.choices[0].message.content or ""
-    usage = {
-        "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
-        "completion_tokens": response.usage.completion_tokens if response.usage else 0,
-        "total_tokens": response.usage.total_tokens if response.usage else 0,
-    }
-    return {"text": text, "usage": usage}
+    _record_usage(response)
+    return [choice.message.content or "" for choice in response.choices]
+
+
+def generate_structured[Schema: BaseModel](
+    system: str,
+    user: str,
+    schema: type[Schema],
+    model: str | None = None,
+    temperature: float = 0.0,
+) -> Schema:
+    """Return the model's answer parsed into `schema` (OpenAI structured outputs)."""
+    response = _client().chat.completions.parse(
+        model=model or settings.llm_model_strong,
+        messages=_messages(system, user),
+        temperature=temperature,
+        response_format=schema,
+    )
+    _record_usage(response)
+    message = response.choices[0].message
+    if message.refusal:
+        raise EngineError(f"The model refused the request: {message.refusal}")
+    if message.parsed is None:
+        raise EngineError("The model returned no structured output")
+    return message.parsed
+
+
+def _messages(system: str, user: str) -> list[dict[str, str]]:
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _record_usage(response) -> None:
+    usage = _current_usage.get()
+    if usage is not None and response.usage is not None:
+        usage.prompt_tokens += response.usage.prompt_tokens
+        usage.completion_tokens += response.usage.completion_tokens
+        usage.calls += 1

@@ -1,67 +1,29 @@
-import re
+"""HyDE: embed a few hypothetical answers together with the query for the dense leg."""
 
+from rag_engine import llm
 from rag_engine.config import settings
-from rag_engine.llm import generate
-from rag_engine.models import RetrievedChunk
-from rag_engine.retrieval.embeddings import embed_texts
-from rag_engine.retrieval.vector_store import search
+from rag_engine.generation import prompts
+from rag_engine.retrieval import embeddings
 
-_HYDE_SYSTEM_PROMPT = (
-    "You are a helpful assistant. Given a user question, write a brief, plausible answer "
-    "(2-3 sentences) that would help retrieve relevant documents. Write only the answer, "
-    "no preamble."
-)
+HYPOTHESES = 3
 
-def _normalize_text(text: str) -> str:
-    """Normalize whitespace for deduplication."""
-    return re.sub(r"\s+", " ", text.strip())
 
-class HyDERetriever:
-    def __init__(self, num_hypotheses: int | None = None) -> None:
-        self.num_hypotheses = num_hypotheses or settings.hyde_num_hypotheses
+def hypothetical_answers(query: str, domain_description: str = "") -> list[str]:
+    """One small-model call that returns HYPOTHESES short passages (the `n` parameter)."""
+    answers = llm.generate_text(
+        prompts.hyde_system(domain_description),
+        query,
+        model=settings.llm_model_small,
+        temperature=0.7,
+        n=HYPOTHESES,
+    )
+    return [answer.strip() for answer in answers if answer.strip()]
 
-    def retrieve(self, question: str, top_k: int = 5) -> list[RetrievedChunk]:
-        if not question or not question.strip():
-            return []
 
-        hypotheses: list[str] = []
-        for _ in range(self.num_hypotheses):
-            try:
-                response = generate(
-                    system_prompt=_HYDE_SYSTEM_PROMPT,
-                    user_message=question,
-                    model=settings.llm_model_strong,
-                    temperature=0.7,
-                )
-                hypothesis = response.get("text", "").strip()
-                if hypothesis:
-                    hypotheses.append(hypothesis)
-            except Exception:
-                continue
+def hyde_vector(query: str, domain_description: str = "") -> list[float]:
+    texts = [query, *hypothetical_answers(query, domain_description)]
+    return average_vectors(embeddings.embed_dense(texts))
 
-        all_texts = hypotheses + [question]
 
-        if not all_texts:
-            return []
-
-        embeddings = embed_texts(all_texts)
-
-        all_results: list[RetrievedChunk] = []
-
-        for embedding in embeddings:
-            try:
-                results = search(embedding, top_k=top_k)
-                all_results.extend(results)
-            except Exception:
-                continue
-
-        deduped: dict[str, RetrievedChunk] = {}
-
-        for chunk in all_results:
-            key = _normalize_text(chunk.text)
-            if key not in deduped or chunk.score > deduped[key].score:
-                deduped[key] = chunk
-
-        merged = sorted(deduped.values(), key=lambda c: c.score, reverse=True)
-        return merged[:top_k]
-
+def average_vectors(vectors: list[list[float]]) -> list[float]:
+    return [sum(values) / len(vectors) for values in zip(*vectors, strict=True)]

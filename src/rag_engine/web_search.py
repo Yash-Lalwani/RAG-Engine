@@ -1,32 +1,29 @@
-import logging
+"""Tavily web search, used by the CRAG web fallback."""
+
+from pydantic import BaseModel
 
 from rag_engine.config import settings
-from rag_engine.models import RetrievedChunk
+from rag_engine.models import EngineError
 
-logger = logging.getLogger(__name__)
+WEB_TIMEOUT_SECONDS = 15
 
-def search_web(query: str, max_results: int = 5) -> list[RetrievedChunk]:
 
+class WebResult(BaseModel):
+    url: str
+    title: str
+    content: str
+
+
+def search_web(query: str, max_results: int = 5) -> list[WebResult]:
     if not settings.tavily_api_key:
-        raise ValueError("Tavily API key not configured")
+        raise EngineError("TAVILY_API_KEY is not set")
+    from tavily import TavilyClient
 
-    try:
-        import tavily
-        client = tavily.TavilyClient(api_key=settings.tavily_api_key)
-        response = client.search(
-            query=query,
-            max_results=max_results,
-            search_depth="basic",
-        )
-        results = response.get("results", [])
-        return [
-            RetrievedChunk(
-                text=result["content"],
-                source=result["url"],
-                score=result.get("score", 0.0),
-            )
-            for result in results
-        ]
-    except Exception:
-        logger.exception("Tavily web search failed")
-        return []
+    response = TavilyClient(api_key=settings.tavily_api_key).search(
+        query=query, max_results=max_results, search_depth="basic", timeout=WEB_TIMEOUT_SECONDS
+    )
+    return [
+        WebResult(url=r["url"], title=r.get("title", ""), content=r.get("content", ""))
+        for r in response.get("results", [])
+        if r.get("content")
+    ]

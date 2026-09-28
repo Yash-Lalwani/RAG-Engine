@@ -119,7 +119,7 @@ def test_search_with_rerank_scores_every_returned_chunk(make_collection, ingest_
     ingest_text(cid, "pods", POD_TEXT)
     ingest_text(cid, "ingress", "# Ingress\n\nIngress routes external HTTP traffic to services.")
     result = engine.search(cid, "what is the smallest deployable unit")
-    assert result.info.reranked and result.info.rerank_error is None
+    assert result.info.reranked and result.info.warnings == []
     assert result.chunks[0].doc_id == "pods"
     assert all(c.rerank_score is not None for c in result.chunks)
 

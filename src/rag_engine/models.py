@@ -2,7 +2,15 @@ import re
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 
 class EngineError(Exception):
@@ -115,6 +123,7 @@ class SearchChunk(BaseModel):
     fused_score: float
     rerank_score: float | None = None
     grade: str | None = None
+    grade_score: float | None = None
     url: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -122,11 +131,12 @@ class SearchChunk(BaseModel):
 class SearchInfo(BaseModel):
     mode: str
     reranked: bool = False
-    rerank_error: str | None = None
     hyde_used: bool = False
     crag_action: str = "not_run"
     web_used: bool = False
+    insufficient_context: bool = False
     candidates: int = 0
+    warnings: list[str] = Field(default_factory=list)
     timings_ms: dict[str, float] = Field(default_factory=dict)
 
 
@@ -137,53 +147,57 @@ class SearchResult(BaseModel):
     info: SearchInfo
 
 
-class RetrievedChunkPreview(BaseModel):
+class Statement(BaseModel):
     text: str
+    chunk_ids: list[str]  # ids of supporting chunks; empty only for non-factual text
+
+
+class CitedAnswer(BaseModel):
+    statements: list[Statement]
+    insufficient_context: bool
+
+
+class Source(BaseModel):
+    number: int
+    chunk_id: str
+    doc_id: str | None = None
     source: str
-    score: float = 0.0
+    url: str | None = None
+    chunk_index: int | None = None
 
 
-class ResponseMetadata(BaseModel):
-    route: str = "rag"
-    retrieved_chunks: list[RetrievedChunkPreview] = Field(default_factory=list)
-    cache_hit: bool = False
-    reflection_iterations: int = 0
-    reflection_score: float | None = None
-    refined_question: str | None = None
+class SelfCheck(BaseModel):
+    groundedness: float
+    completeness: float
+    score: float
+    reason: str
 
 
-class PendingSQLBlock(BaseModel):
-    sql: str
-    query_id: str
-    explanation: str = ""
-
-
-class ChatResponse(BaseModel):
-    answer: str = Field(..., min_length=0)
-    sources: list[str] = Field(default_factory=list)
-    confidence: float = Field(..., ge=0.0, le=1.0)
-    pending_sql: PendingSQLBlock | None = None
-    cache_hit: bool = False
-    metadata: ResponseMetadata = Field(default_factory=ResponseMetadata)
-
-
-class RetrievedChunk(BaseModel):
+class StatementCheck(BaseModel):
+    index: int
     text: str
-    source: str
-    score: float = 0.0
+    chunk_ids: list[str]
+    supported: bool | None  # None: not checked (no citations) or not verified (check failed)
+    reason: str
 
 
-class CRAGEvaluation(BaseModel):
-    relevance_score: float = 0.0
-    relevance_label: str = ""
-    confidence: float = 0.0
-    reasoning: str = ""
+class VerificationResult(BaseModel):
+    strict: bool
+    all_supported: bool
+    checked: int
+    removed_count: int
+    statements: list[Statement]
+    checks: list[StatementCheck]
+    failing: list[StatementCheck]
+    warnings: list[str] = Field(default_factory=list)
 
 
-class ReflectionResult(BaseModel):
-    """Self-RAG reflection on a generated answer."""
+class TokenUsage(BaseModel):
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    calls: int = 0
 
-    reflection_score: float = 0.0
-    needs_regeneration: bool = False
-    refined_question: str = ""
-    reasoning: str = ""
+    @computed_field
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens

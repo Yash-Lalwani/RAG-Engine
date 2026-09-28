@@ -1,64 +1,96 @@
-from __future__ import annotations
+"""generate_answer(): a structured, cited answer from spotlighted chunks (and SQL rows)."""
 
-from rag_engine.generation.prompts import build_system_prompt
-from rag_engine.grading.self_rag import reflect_on_answer, should_regenerate
-from rag_engine.guardrails.spotlight import build_spotlighted_context
-from rag_engine.llm import generate
-from rag_engine.models import (
-    ChatResponse,
-    ResponseMetadata,
-    RetrievedChunk,
-    RetrievedChunkPreview,
-)
-from rag_engine.retrieval.search import _flag
+import json
+from typing import Any
+
+from rag_engine import llm
+from rag_engine.config import settings
+from rag_engine.generation import prompts
+from rag_engine.guardrails.spotlight import spotlight_documents, spotlight_rows
+from rag_engine.models import CitedAnswer, Passage, SearchChunk, Source, Statement
+
+SQL_SOURCE_ID = "sql_results"
+NO_CONTEXT_TEXT = "The available documents do not contain enough information to answer this question."
 
 
-def _generate(
+def generate_answer(
     question: str,
-    chunks: list[RetrievedChunk],
-    flags: dict | None = None,
-) -> ChatResponse:
-    enable_self_reflective = bool(_flag(flags, "enable_self_reflective", False))
+    chunks: list[SearchChunk],
+    sql_rows: list[dict[str, Any]] | None = None,
+    domain_description: str = "",
+) -> CitedAnswer:
+    if not chunks and not sql_rows:
+        return CitedAnswer(
+            statements=[Statement(text=NO_CONTEXT_TEXT, chunk_ids=[])], insufficient_context=True
+        )
 
-    spotlighted = build_spotlighted_context(chunks)
-    system = build_system_prompt()
+    labels = {f"c{n}": chunk.id for n, chunk in enumerate(chunks, start=1)}
+    context = spotlight_documents([(f"c{n}", c.source, c.text) for n, c in enumerate(chunks, start=1)])
+    if sql_rows:
+        labels["sql"] = SQL_SOURCE_ID
+        context += "\n\n" + spotlight_rows("sql", sql_rows)
 
-    def _raw(q: str) -> str:
-        return generate(system, f"{spotlighted}\n\nQuestion: {q}")["text"]
-
-    working_q = question
-    raw = _raw(working_q)
-
-    iterations = 0
-    last_score: float | None = None
-    final_refined: str | None = None
-    if enable_self_reflective:
-        while True:
-            reflection = reflect_on_answer(
-                question=working_q,
-                answer=raw,
-                context=spotlighted,
-            )
-            last_score = float(reflection.reflection_score)
-            if not should_regenerate(reflection, iterations):
-                break
-            final_refined = reflection.refined_question or working_q
-            working_q = final_refined
-            raw = _raw(working_q)
-            iterations += 1
-
-    chunk_previews = [
-        RetrievedChunkPreview(text=c.text, source=c.source, score=c.score) for c in chunks
+    raw = llm.generate_structured(
+        prompts.answer_system(domain_description),
+        f"{context}\n\nQuestion: {question}",
+        CitedAnswer,
+        model=settings.llm_model_strong,
+    )
+    statements = [
+        Statement(text=s.text.strip(), chunk_ids=_known_ids(s.chunk_ids, labels))
+        for s in raw.statements
+        if s.text.strip()
     ]
-    return ChatResponse(
-        answer=raw,
-        sources=list({c.source for c in chunks}),
-        confidence=0.7,
-        metadata=ResponseMetadata(
-            route="rag",
-            retrieved_chunks=chunk_previews,
-            reflection_iterations=iterations,
-            reflection_score=last_score,
-            refined_question=final_refined,
-        ),
+    return CitedAnswer(statements=statements, insufficient_context=raw.insufficient_context)
+
+
+def render_answer(
+    statements: list[Statement], chunks: list[SearchChunk]
+) -> tuple[str, list[Source]]:
+    """Answer text with [n] markers, plus the numbered source list (one number per cited chunk)."""
+    numbers: dict[str, int] = {}
+    parts = []
+    for statement in statements:
+        for chunk_id in statement.chunk_ids:
+            numbers.setdefault(chunk_id, len(numbers) + 1)
+        markers = "".join(f"[{numbers[chunk_id]}]" for chunk_id in statement.chunk_ids)
+        parts.append(f"{statement.text} {markers}".rstrip())
+
+    by_id = {chunk.id: chunk for chunk in chunks}
+    sources = [_source(number, chunk_id, by_id.get(chunk_id)) for chunk_id, number in numbers.items()]
+    return " ".join(parts), sources
+
+
+def citation_passages(
+    chunks: list[SearchChunk], sql_rows: list[dict[str, Any]] | None = None
+) -> list[Passage]:
+    """The passages a generated answer may cite, in the form verify_citations expects."""
+    passages = [Passage(id=chunk.id, text=chunk.text) for chunk in chunks]
+    if sql_rows:
+        passages.append(Passage(id=SQL_SOURCE_ID, text=json.dumps(sql_rows, default=str)))
+    return passages
+
+
+def _known_ids(chunk_labels: list[str], labels: dict[str, str]) -> list[str]:
+    """Map prompt labels (c1, sql) to real ids, dropping labels the model made up."""
+    ids = []
+    for label in chunk_labels:
+        real_id = labels.get(label.strip())
+        if real_id and real_id not in ids:
+            ids.append(real_id)
+    return ids
+
+
+def _source(number: int, chunk_id: str, chunk: SearchChunk | None) -> Source:
+    if chunk_id == SQL_SOURCE_ID:
+        return Source(number=number, chunk_id=chunk_id, source="SQL query results")
+    if chunk is None:
+        return Source(number=number, chunk_id=chunk_id, source="unknown")
+    return Source(
+        number=number,
+        chunk_id=chunk_id,
+        doc_id=chunk.doc_id,
+        source=chunk.source,
+        url=chunk.url,
+        chunk_index=chunk.chunk_index,
     )

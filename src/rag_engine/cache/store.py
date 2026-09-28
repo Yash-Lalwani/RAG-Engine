@@ -23,12 +23,18 @@ _request_counts: ContextVar[dict[str, dict[str, int]] | None] = ContextVar(
 @contextmanager
 def track_cache() -> Iterator[dict[str, dict[str, int]]]:
     """Count cache hits and misses per tier for everything inside the `with` block."""
+    outer = _request_counts.get()
     counts: dict[str, dict[str, int]] = {}
     token = _request_counts.set(counts)
     try:
         yield counts
     finally:
         _request_counts.reset(token)
+        if outer is not None:  # nested blocks also count toward the enclosing block
+            for tier, tier_counts in counts.items():
+                merged = outer.setdefault(tier, {"hits": 0, "misses": 0})
+                merged["hits"] += tier_counts["hits"]
+                merged["misses"] += tier_counts["misses"]
 
 
 class CacheStore:
@@ -37,6 +43,11 @@ class CacheStore:
         self._memory: dict[str, tuple[float, str]] = {}
         self._stats: dict[str, dict[str, int]] = defaultdict(lambda: {"hits": 0, "misses": 0})
         self._lock = threading.Lock()
+
+    @property
+    def redis(self) -> Any | None:
+        """The Upstash client, or None when Upstash is not configured (shared with G3 and G4)."""
+        return self._redis
 
     @staticmethod
     def _build_redis_client() -> Any | None:

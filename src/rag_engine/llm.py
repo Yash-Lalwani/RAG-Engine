@@ -17,12 +17,17 @@ _current_usage: ContextVar[TokenUsage | None] = ContextVar("current_usage", defa
 @contextmanager
 def track_usage() -> Iterator[TokenUsage]:
     """Count the tokens of every LLM call made inside the `with` block."""
+    outer = _current_usage.get()
     usage = TokenUsage()
     token = _current_usage.set(usage)
     try:
         yield usage
     finally:
         _current_usage.reset(token)
+        if outer is not None:  # nested blocks also count toward the enclosing block
+            outer.prompt_tokens += usage.prompt_tokens
+            outer.completion_tokens += usage.completion_tokens
+            outer.calls += usage.calls
 
 
 @lru_cache

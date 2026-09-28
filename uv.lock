@@ -2094,6 +2094,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "sqlglot" },
     { name = "tavily-python" },
+    { name = "transformers" },
     { name = "upstash-redis" },
     { name = "voyageai" },
 ]
@@ -2119,6 +2120,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=6.1.0" },
     { name = "sqlglot", specifier = ">=30.20.0" },
     { name = "tavily-python", specifier = ">=0.8.4" },
+    { name = "transformers", specifier = ">=5.17.0" },
     { name = "upstash-redis", specifier = ">=1.8.0" },
     { name = "voyageai", specifier = ">=0.5.0" },
 ]

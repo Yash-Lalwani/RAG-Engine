@@ -13,10 +13,13 @@ from rag_engine import collections, config
 from rag_engine.cache.keys import ANSWER_TIER, ANSWER_TTL, answer_key
 from rag_engine.cache.store import cache, track_cache
 from rag_engine.graph.builder import get_graph
+from rag_engine.guardrails.input_checks import guard_input
+from rag_engine.guardrails.output_checks import guard_answer
 from rag_engine.ingestion import pipeline
 from rag_engine.models import (
     AskMetadata,
     AskResult,
+    Blocked,
     ChunkPreview,
     Collection,
     CollectionSettings,
@@ -118,7 +121,13 @@ def search(
     filters: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
 ) -> SearchResult:
-    return search_module.search(collection_id, query, top_k, filters, options)
+    """Raises Blocked if the query fails G1 or G2."""
+    if not query.strip():
+        raise EngineError("query must not be empty")
+    input_warnings = guard_input(query)
+    result = search_module.search(collection_id, query, top_k, filters, options)
+    result.info.warnings = input_warnings + result.info.warnings
+    return result
 
 
 def rerank(
@@ -143,6 +152,11 @@ def ask(
     question = question.strip()
     if not question:
         raise EngineError("question must not be empty")
+    query_id = str(uuid.uuid4())
+    try:
+        input_warnings = guard_input(question)
+    except Blocked as blocked:
+        return AskResult(status="blocked", query_id=query_id, message=str(blocked))
     collection = collections.get(collection_id)
     options = dict(options or {})
     filters = options.pop("filters", None) or {}
@@ -151,13 +165,12 @@ def ask(
 
     effective = {"settings": settings.model_dump(), "filters": filters}
     key = answer_key(collection_id, collection.version, question, effective)
-    query_id = str(uuid.uuid4())
     started = time.perf_counter()
     with track_cache() as cache_counts:
         cached = cache.get(ANSWER_TIER, key)
     if cached is not None:
         elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-        return _from_answer_cache(cached, query_id, cache_counts, elapsed_ms)
+        return _from_answer_cache(cached, query_id, cache_counts, elapsed_ms, input_warnings)
 
     state = {
         "query_id": query_id,
@@ -170,7 +183,7 @@ def ask(
         "filters": filters,
         "settings": settings.model_dump(),
         "retries": 0,
-        "warnings": [],
+        "warnings": input_warnings,
         "cache": cache_counts,
     }
     return _run(state, query_id, answer_cache_key=key)
@@ -219,7 +232,7 @@ def _run(graph_input: Any, query_id: str, answer_cache_key: str | None = None) -
         return _to_result(state, pending=True)
 
     graph.checkpointer.delete_thread(query_id)
-    result = _to_result(state, pending=False)
+    result = guard_answer(_to_result(state, pending=False))
     cacheable = result.status == "completed" and result.intent == "rag" and not result.metadata.warnings
     if answer_cache_key and cacheable:
         cache.set(ANSWER_TIER, answer_cache_key, result.model_dump_json(), ANSWER_TTL)
@@ -268,7 +281,7 @@ def _to_result(state: dict[str, Any], pending: bool) -> AskResult:
 
 
 def _from_answer_cache(
-    cached: str, query_id: str, cache_counts: dict, elapsed_ms: float
+    cached: str, query_id: str, cache_counts: dict, elapsed_ms: float, warnings: list[str]
 ) -> AskResult:
     result = AskResult.model_validate_json(cached)
     metadata = result.metadata.model_copy(
@@ -277,6 +290,7 @@ def _from_answer_cache(
             "cache": cache_counts,
             "token_usage": TokenUsage(),
             "timings_ms": {"total_ms": elapsed_ms},
+            "warnings": warnings,
         }
     )
     return result.model_copy(update={"query_id": query_id, "metadata": metadata})

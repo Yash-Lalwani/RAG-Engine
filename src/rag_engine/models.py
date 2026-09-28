@@ -17,6 +17,14 @@ class EngineError(Exception):
     """Bad input or a missing resource. The message is meant for the caller."""
 
 
+class Blocked(EngineError):
+    """A guardrail stopped the request. The message is the short reason shown to the caller."""
+
+
+class AuthError(EngineError):
+    """Missing or invalid API key."""
+
+
 def validation_message(error: ValidationError) -> str:
     return "; ".join(
         f"{'.'.join(str(part) for part in e['loc']) or 'value'}: {e['msg']}" for e in error.errors()

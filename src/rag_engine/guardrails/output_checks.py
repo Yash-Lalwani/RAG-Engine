@@ -1,86 +1,82 @@
-from __future__ import annotations
+"""G6: output moderation (toxicity model) and PII redaction (regex) on final answers."""
 
 import logging
 import re
-from typing import Any
 
 from rag_engine.config import settings
+from rag_engine.guardrails.input_checks import toxicity_score
+from rag_engine.models import AskResult, Statement, StatementCheck
 
 logger = logging.getLogger(__name__)
 
-_PII_PATTERNS: list[tuple[str, str]] = [
-    (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[REDACTED_EMAIL]"),
-    (r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", "[REDACTED_PHONE]"),
-    (r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b", "[REDACTED_CARD]"),
-]
+EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+US_SSN = re.compile(r"\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b")
+PHONE = re.compile(r"(?<![\w-])(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\w-])")
+CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
 
 
-def _load_moderation() -> Any | None:
+def guard_answer(result: AskResult) -> AskResult:
+    """Block a toxic answer, otherwise redact PII from the answer, its statements and checks."""
+    if result.status != "completed" or not result.answer:
+        return result
+    warnings = []
     try:
-        from llm_guard import scan_output
-        return scan_output
-    except Exception:
-        logger.debug("llm-guard output scan not available; using fallback")
-        return None
+        if toxicity_score(result.answer) >= settings.output_toxicity_threshold:
+            return AskResult(
+                status="blocked",
+                query_id=result.query_id,
+                intent=result.intent,
+                message="The answer was blocked by output moderation",
+                metadata=result.metadata,
+            )
+    except Exception as exc:
+        logger.warning("Output moderation failed: %s", exc)
+        warnings.append(f"Output moderation (G6) unavailable, continued without it: {exc}")
 
-
-_SCAN_OUTPUT = _load_moderation()
-_pii_scanners: list[Any] | None = None
-_moderation_scanners: list[Any] | None = None
-
-
-def _get_pii_scanners() -> list[Any]:
-    """Lazy-build llm-guard Sensitive scanner for PII redaction."""
-    global _pii_scanners
-    if _pii_scanners is not None:
-        return _pii_scanners
-    from llm_guard.output_scanners import Sensitive
-    _pii_scanners = [Sensitive(redact=True, threshold=settings.output_toxicity_threshold)]
-    return _pii_scanners
-
-
-def _get_moderation_scanners() -> list[Any]:
-    global _moderation_scanners
-    if _moderation_scanners is not None:
-        return _moderation_scanners
-    from llm_guard.output_scanners import Toxicity
-    _moderation_scanners = [Toxicity(threshold=settings.output_toxicity_threshold)]
-    return _moderation_scanners
+    updates = {
+        "answer": redact_pii(result.answer),
+        "statements": _redact_statements(result.statements),
+        "metadata": result.metadata.model_copy(
+            update={"warnings": result.metadata.warnings + warnings}
+        ),
+    }
+    if result.verification:
+        updates["verification"] = result.verification.model_copy(
+            update={
+                "statements": _redact_statements(result.verification.statements),
+                "checks": _redact_checks(result.verification.checks),
+                "failing": _redact_checks(result.verification.failing),
+            }
+        )
+    return result.model_copy(update=updates)
 
 
 def redact_pii(text: str) -> str:
-    if _SCAN_OUTPUT is not None:
-        try:
-            scanners = _get_pii_scanners()
-            sanitized, _, _ = _SCAN_OUTPUT(scanners, "", text)
-            return str(sanitized)
-        except Exception:
-            logger.exception("llm-guard PII redaction failed; using regex fallback")
-
-    for pattern, replacement in _PII_PATTERNS:
-        text = re.sub(pattern, replacement, text)
-    return text
+    text = EMAIL.sub("[REDACTED_EMAIL]", text)
+    text = US_SSN.sub("[REDACTED_SSN]", text)
+    text = CARD_CANDIDATE.sub(_redact_card, text)
+    return PHONE.sub("[REDACTED_PHONE]", text)
 
 
-def moderate_output(text: str) -> tuple[bool, str | None]:
-    """Moderate LLM output text. Returns (allowed, reason_or_none)."""
-    if _SCAN_OUTPUT is not None:
-        try:
-            scanners = _get_moderation_scanners()
-            _, is_valid, _ = _SCAN_OUTPUT(scanners, "", text)
-            failed = [name for name, valid in is_valid.items() if not valid]
-            if failed:
-                checks = ", ".join(failed)
-                return False, f"Output blocked by {checks}"
-            return True, None
-        except Exception:
-            logger.exception("llm-guard output moderation failed; allowing")
-
-    return True, None
+def _redact_card(match: re.Match) -> str:
+    digits = re.sub(r"\D", "", match.group(0))
+    return "[REDACTED_CARD]" if luhn_valid(digits) else match.group(0)
 
 
-def moderate_and_redact(text: str) -> tuple[bool, str, str | None]:
-    """Moderate output and redact PII. Returns (allowed, redacted_text, reason)."""
-    allowed, reason = moderate_output(text)
-    redacted = redact_pii(text)
-    return allowed, redacted, reason
+def luhn_valid(digits: str) -> bool:
+    """Card numbers pass the Luhn checksum; most random digit strings do not."""
+    total = 0
+    for position, char in enumerate(reversed(digits)):
+        digit = int(char)
+        if position % 2 == 1:
+            digit = digit * 2 - 9 if digit > 4 else digit * 2
+        total += digit
+    return total % 10 == 0
+
+
+def _redact_statements(statements: list[Statement]) -> list[Statement]:
+    return [s.model_copy(update={"text": redact_pii(s.text)}) for s in statements]
+
+
+def _redact_checks(checks: list[StatementCheck]) -> list[StatementCheck]:
+    return [c.model_copy(update={"text": redact_pii(c.text)}) for c in checks]

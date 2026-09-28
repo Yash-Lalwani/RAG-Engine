@@ -24,3 +24,13 @@ def test_track_usage_adds_up_calls_inside_the_block():
     llm._record_usage(response)  # after the block: ignored
     assert (usage.prompt_tokens, usage.completion_tokens, usage.calls) == (20, 8, 2)
     assert usage.total_tokens == 28
+
+
+def test_nested_track_usage_adds_to_the_enclosing_block():
+    response = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=5, completion_tokens=1))
+    with llm.track_usage() as outer:
+        llm._record_usage(response)
+        with llm.track_usage() as inner:
+            llm._record_usage(response)
+            llm._record_usage(response)
+    assert inner.calls == 2 and outer.calls == 3 and outer.total_tokens == 18

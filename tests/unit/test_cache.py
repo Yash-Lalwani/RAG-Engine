@@ -33,3 +33,12 @@ def test_intent_and_sql_keys_include_the_allowed_tables_in_any_order():
     assert intent_key("c", ["b", "a"], "q") == intent_key("c", ["a", "b"], "q")
     assert intent_key("c", ["a"], "q") != intent_key("c", ["a", "b"], "q")
     assert sql_generation_key("db", ["a"], "q") != sql_generation_key("db", ["a", "b"], "q")
+
+
+def test_nested_track_cache_adds_to_the_enclosing_block():
+    store = CacheStore()
+    with track_cache() as outer:
+        store.get("t", "a")
+        with track_cache() as inner:
+            store.get("t", "b")
+    assert inner == {"t": {"hits": 0, "misses": 1}} and outer == {"t": {"hits": 0, "misses": 2}}

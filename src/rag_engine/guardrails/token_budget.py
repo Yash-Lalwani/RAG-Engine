@@ -1,71 +1,56 @@
-"""Per-user daily token budget tracked in Redis."""
+"""G4: daily token budget per caller, from the actual token usage of each request."""
 
-import datetime
+import logging
+import threading
+from datetime import UTC, datetime
 
-from upstash_redis import Redis
-
+from rag_engine.cache.store import cache
 from rag_engine.config import settings
+from rag_engine.models import Blocked
 
-_redis_client: Redis | None = None
+logger = logging.getLogger(__name__)
 
+KEY_TTL_SECONDS = 2 * 24 * 3600  # the key contains the date, so it only needs to outlive the day
 
-def get_redis_client() -> Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = Redis(
-            url=settings.upstash_redis_rest_url,
-            token=settings.upstash_redis_rest_token,
-        )
-    return _redis_client
+_memory: dict[str, int] = {}
+_lock = threading.Lock()
 
 
-class TokenBudget:
-    def __init__(self, max_tokens: int):
-        self.max_tokens = max_tokens
-
-    def _key(self, user_id: str) -> str:
-        today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
-        return f"token_budget:{user_id}:{today}"
-
-    def check_budget(self, user_id: str, estimated_tokens: int) -> tuple[bool, int]:
-        client = get_redis_client()
-        key = self._key(user_id)
-        used_str = client.get(key)
-        used = int(used_str) if used_str is not None else 0
-        remaining = self.max_tokens - used
-        ok = estimated_tokens <= remaining
-        return ok, remaining
-
-    def consume(self, user_id: str, actual_tokens: int) -> dict:
-        client = get_redis_client()
-        key = self._key(user_id)
-        used = client.incrby(key, actual_tokens)
-
-        # Set TTL to seconds-until-midnight on first write
-        ttl = client.ttl(key)
-        if ttl == -1:
-            now = datetime.datetime.now(datetime.UTC)
-            midnight = (now + datetime.timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            seconds_until_midnight = int((midnight - now).total_seconds())
-            client.expire(key, seconds_until_midnight)
-
-        remaining = max(0, self.max_tokens - used)
-        return {
-            "used": used,
-            "limit": self.max_tokens,
-            "remaining": remaining,
-            "tokens_charged": actual_tokens,
-        }
+def check_budget(caller: str) -> None:
+    """Before a call: raise Blocked once the caller has used today's budget."""
+    budget = settings.daily_token_budget
+    if tokens_used(caller) >= budget:
+        raise Blocked(f"Daily token budget of {budget} tokens is used up; it resets at 00:00 UTC")
 
 
-_budget = TokenBudget(max_tokens=settings.daily_token_budget)
+def record_usage(caller: str, tokens: int) -> None:
+    """After a call: add the tokens it actually used (from llm.track_usage())."""
+    if tokens <= 0:
+        return
+    key = _key(caller)
+    if cache.redis:
+        try:
+            pipeline = cache.redis.pipeline()
+            pipeline.incrby(key, tokens)
+            pipeline.expire(key, KEY_TTL_SECONDS)
+            pipeline.exec()
+            return
+        except Exception:
+            logger.exception("Redis token budget failed; recording in memory")
+    with _lock:
+        _memory[key] = _memory.get(key, 0) + tokens
 
 
-def check_budget(user_id: str, estimated_tokens: int) -> tuple[bool, int]:
-    return _budget.check_budget(user_id, estimated_tokens)
+def tokens_used(caller: str) -> int:
+    key = _key(caller)
+    if cache.redis:
+        try:
+            return int(cache.redis.get(key) or 0)
+        except Exception:
+            logger.exception("Redis token budget failed; reading from memory")
+    with _lock:
+        return _memory.get(key, 0)
 
 
-def consume_budget(user_id: str, actual_tokens: int) -> dict:
-    return _budget.consume(user_id, actual_tokens)
+def _key(caller: str) -> str:
+    return f"budget:{caller}:{datetime.now(UTC):%Y-%m-%d}"

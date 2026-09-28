@@ -15,6 +15,16 @@ from rag_engine.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def no_guardrail_models(monkeypatch):
+    """Unit tests never load the G2/G6 models; tests that need scores override these."""
+    from rag_engine.guardrails import input_checks, output_checks
+
+    monkeypatch.setattr(input_checks, "injection_score", lambda text: 0.0)
+    monkeypatch.setattr(input_checks, "toxicity_score", lambda text: 0.0)
+    monkeypatch.setattr(output_checks, "toxicity_score", lambda text: 0.0)
+
+
 @pytest.fixture
 def make_chunk():
     def _make(chunk_id: str, text: str = "some text", source: str = "doc.md") -> SearchChunk:

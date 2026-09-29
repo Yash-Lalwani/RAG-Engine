@@ -4,6 +4,7 @@ import json
 from functools import lru_cache
 
 from fastembed import SparseTextEmbedding
+from langsmith.wrappers import wrap_openai
 from openai import OpenAI
 from qdrant_client.models import SparseVector
 
@@ -17,7 +18,7 @@ BM25_MODEL = "Qdrant/bm25"
 
 @lru_cache
 def _openai_client() -> OpenAI:
-    return OpenAI(api_key=settings.openai_api_key)
+    return wrap_openai(OpenAI(api_key=settings.openai_api_key))
 
 
 @lru_cache

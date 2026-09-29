@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from langsmith import traceable
 from qdrant_client.models import PointStruct
 
 from rag_engine import collections
@@ -19,6 +20,7 @@ from rag_engine.retrieval import embeddings, vector_store
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 
 
+@traceable(name="ingest_document")
 def ingest_document(
     collection_id: str,
     file_path: str | None = None,

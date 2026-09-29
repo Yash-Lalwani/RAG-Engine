@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import lru_cache
 
+from langsmith.wrappers import wrap_openai
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -25,8 +26,8 @@ def track_usage() -> Iterator[TokenUsage]:
     finally:
         _current_usage.reset(token)
         if outer is not None:  # nested blocks also count toward the enclosing block
-            outer.prompt_tokens += usage.prompt_tokens
-            outer.completion_tokens += usage.completion_tokens
+            for model, tokens in usage.by_model.items():
+                outer.add(model, tokens["prompt"], tokens["completion"], calls=0)
             outer.calls += usage.calls
 
 
@@ -34,7 +35,7 @@ def track_usage() -> Iterator[TokenUsage]:
 def _client() -> OpenAI:
     if not settings.openai_api_key:
         raise EngineError("OPENAI_API_KEY is not set")
-    return OpenAI(api_key=settings.openai_api_key)
+    return wrap_openai(OpenAI(api_key=settings.openai_api_key))
 
 
 def generate_text(
@@ -85,6 +86,5 @@ def _messages(system: str, user: str) -> list[dict[str, str]]:
 def _record_usage(response) -> None:
     usage = _current_usage.get()
     if usage is not None and response.usage is not None:
-        usage.prompt_tokens += response.usage.prompt_tokens
-        usage.completion_tokens += response.usage.completion_tokens
-        usage.calls += 1
+        model = getattr(response, "model", None) or "unknown"
+        usage.add(model, response.usage.prompt_tokens, response.usage.completion_tokens)

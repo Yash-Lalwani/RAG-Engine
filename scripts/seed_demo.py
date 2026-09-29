@@ -1,4 +1,5 @@
-"""Create the k8s-demo collection and ingest the Kubernetes docs. Safe to re-run.
+"""Create the k8s-demo collection and ingest the Kubernetes docs (plus the evaluation noise
+corpus in data/noise/, if it has been built). Safe to re-run.
 
 Run from the repository root: uv run python scripts/seed_demo.py
 """
@@ -11,6 +12,7 @@ from rag_engine.models import EngineError
 
 COLLECTION_ID = "k8s-demo"
 DOCS_DIR = Path(__file__).resolve().parent.parent / "data" / "k8s_docs"
+NOISE_DIR = Path(__file__).resolve().parent.parent / "data" / "noise"
 DEMO_TABLES = ["clusters", "nodes", "deployments", "pods", "incidents", "alerts", "oncall_logs"]
 SETTINGS = {
     "domain_description": "Kubernetes documentation (concepts, tasks, tutorials and API reference)",
@@ -30,9 +32,11 @@ def main() -> None:
         engine.create_collection(COLLECTION_ID, "Kubernetes demo", settings=SETTINGS)
 
     files = sorted(p for p in DOCS_DIR.iterdir() if p.is_file() and not p.name.startswith("."))
+    if NOISE_DIR.exists():  # built by scripts/build_noise_corpus.py for the evaluation
+        files += sorted(NOISE_DIR.glob("*.txt"))
     counts: dict[str, int] = {}
     for number, path in enumerate(files, start=1):
-        section = path.name.split("__")[0]
+        section = "noise" if path.parent == NOISE_DIR else path.name.split("__")[0]
         try:
             result = engine.ingest_document(
                 COLLECTION_ID, file_path=str(path), metadata={"section": section}

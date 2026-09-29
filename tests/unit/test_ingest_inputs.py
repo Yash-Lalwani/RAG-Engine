@@ -70,3 +70,12 @@ def test_document_hash_covers_content_and_metadata():
 def test_document_hash_rejects_non_json_metadata():
     with pytest.raises(EngineError, match="JSON"):
         document_hash(b"hello", {"when": object()})
+
+
+def test_comma_heavy_text_files_are_not_mistaken_for_csv():
+    from rag_engine.ingestion.chunker import chunk_document
+    from rag_engine.ingestion.parser import parse_document
+
+    text = "Cast\n\nAlice, Bob, Carol, Dan\nEve, Frank, Grace, Heidi\n\nA film about a pilot, a poet, and a plan.\n"
+    chunks = chunk_document(parse_document(text.encode(), "cast.txt"))
+    assert chunks and "pilot" in " ".join(c["text"] for c in chunks)

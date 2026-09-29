@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 import psycopg
+from langsmith import traceable
 
 from rag_engine.cache.keys import SQL_RESULT_TIER, SQL_RESULT_TTL, sql_result_key
 from rag_engine.cache.store import cache
@@ -16,6 +17,7 @@ from rag_engine.sql.schema import database_url
 STATEMENT_TIMEOUT_MS = 5000
 
 
+@traceable(name="run_sql")
 def run_sql(sql: str, database: str, allowed_tables: list[str]) -> SqlResult:
     safe_sql = validate_sql(sql, allowed_tables)
     url = database_url(database)

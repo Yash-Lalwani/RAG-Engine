@@ -1,5 +1,7 @@
 """generate_sql(): question -> one SELECT over the allowlisted tables. Executes nothing."""
 
+from langsmith import traceable
+
 from rag_engine import llm
 from rag_engine.cache.keys import SQL_GEN_TIER, SQL_GEN_TTL, sql_generation_key
 from rag_engine.cache.store import cache
@@ -10,6 +12,7 @@ from rag_engine.sql.safety import validate_sql
 from rag_engine.sql.schema import describe_schema
 
 
+@traceable(name="generate_sql")
 def generate_sql(
     question: str, database: str, allowed_tables: list[str], domain_description: str = ""
 ) -> SqlDraft:

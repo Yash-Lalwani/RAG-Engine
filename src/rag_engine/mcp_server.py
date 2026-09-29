@@ -12,6 +12,7 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 import uvicorn
+from langsmith import tracing_context
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
@@ -77,7 +78,7 @@ def run_tool[T](
         check_rate_limit(caller)
         if budget:
             check_budget(caller)
-        with track_usage() as usage:
+        with track_usage() as usage, tracing_context(tags=[f"caller:{caller}"], metadata={"caller": caller}):
             try:
                 return call(caller)
             finally:

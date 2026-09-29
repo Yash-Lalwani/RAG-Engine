@@ -2,6 +2,7 @@
 
 import logging
 
+from langsmith import traceable
 from pydantic import BaseModel
 
 from rag_engine import llm
@@ -23,6 +24,7 @@ class _Checks(BaseModel):
     checks: list[_Check]
 
 
+@traceable(name="verify_citations")
 def verify_citations(
     statements: list[Statement], passages: list[Passage], strict: bool = False
 ) -> VerificationResult:

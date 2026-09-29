@@ -113,6 +113,12 @@ def count_points(collection_id: str, doc_id: str | None = None) -> int:
     ).count
 
 
+def get_texts(point_ids: list[str]) -> dict[str, str]:
+    """Full chunk text for the given point ids (ids that are not stored, like web results, are skipped)."""
+    points = get_client().retrieve(QDRANT_COLLECTION, ids=point_ids, with_payload=["text"])
+    return {str(point.id): point.payload["text"] for point in points}
+
+
 def query(
     vector: list[float] | models.SparseVector,
     using: str,

@@ -11,6 +11,16 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 from rag_engine.mcp_server import server
 
 
+@pytest.fixture(scope="session", autouse=True)
+def no_tracing():
+    """Tests never send traces to LangSmith, even when .env has a key."""
+    from rag_engine.config import settings
+    from rag_engine.tracing import configure_tracing
+
+    settings.langsmith_tracing = False
+    configure_tracing()
+
+
 @pytest.fixture(scope="session")
 def mcp_url():
     """The MCP server running in a background thread on a free local port."""

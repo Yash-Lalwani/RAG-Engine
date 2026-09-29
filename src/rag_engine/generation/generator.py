@@ -1,5 +1,7 @@
 """generate_answer(): a structured, cited answer from spotlighted chunks (and SQL rows)."""
 
+from langsmith import traceable
+
 from rag_engine import llm
 from rag_engine.config import settings
 from rag_engine.generation import prompts
@@ -11,6 +13,7 @@ LLM_ROWS = 50  # rows shown to the LLM; the total count is always included
 NO_CONTEXT_TEXT = "The available documents do not contain enough information to answer this question."
 
 
+@traceable(name="generate_answer")
 def generate_answer(
     question: str,
     chunks: list[SearchChunk],

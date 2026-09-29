@@ -29,6 +29,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.3",
+    "pyyaml>=6.0.3",
     "ruff>=0.7",
     "streamlit>=1.64.0",
 ]
@@ -48,6 +49,11 @@ ignore = ["E501", "B008"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-m 'not integration and not llm'"
+filterwarnings = [
+    # The LangSmith OpenAI wrapper serializes structured outputs; Pydantic warns about the
+    # `parsed` field. Harmless (see src/rag_engine/tracing.py).
+    "ignore:Pydantic serializer warnings:UserWarning",
+]
 markers = [
     "integration: needs Docker services (docker compose up -d qdrant postgres) or model downloads",
     "llm: calls the OpenAI API (needs OPENAI_API_KEY, costs a little)",

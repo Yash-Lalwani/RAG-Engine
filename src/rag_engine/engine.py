@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from langgraph.types import Command
+from langsmith import traceable
 from pydantic import ValidationError
 
 from rag_engine import collections, config, db
@@ -42,6 +43,7 @@ from rag_engine.models import (
 from rag_engine.retrieval import embeddings, vector_store
 from rag_engine.retrieval import rerank as rerank_module
 from rag_engine.retrieval import search as search_module
+from rag_engine.tracing import configure_tracing, tag_current_run
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,7 @@ PREVIEW_CHARS = 300
 def setup() -> None:
     """Create the Postgres tables, the Qdrant collection and the ask() graph, and delete paused
     runs older than 24 hours."""
+    configure_tracing()
     collections.ensure_schema()
     vector_store.ensure_collection()
     get_graph()
@@ -140,6 +143,7 @@ def delete_document(collection_id: str, doc_id: str) -> DeleteResult:
     return DeleteResult(collection_id=collection_id, doc_id=doc_id)
 
 
+@traceable(name="engine.search")
 def search(
     collection_id: str,
     query: str,
@@ -150,6 +154,10 @@ def search(
     """Raises Blocked if the query fails G1 or G2."""
     if not query.strip():
         raise EngineError("query must not be empty")
+    tag_current_run(
+        [f"collection:{collection_id}"],
+        {"collection_id": collection_id, "options": options, "filters": filters},
+    )
     input_warnings = guard_input(query)
     result = search_module.search(collection_id, query, top_k, filters, options)
     result.info.warnings = input_warnings + result.info.warnings
@@ -170,6 +178,7 @@ def rerank(
     return rerank_module.rerank(query, parsed, top_k, backend)
 
 
+@traceable(name="ask")
 def ask(
     collection_id: str, question: str, options: dict[str, Any] | None = None, *, caller: str
 ) -> AskResult:
@@ -190,6 +199,11 @@ def ask(
     search_module.check_filters(filters, settings.filterable_fields)
 
     effective = {"settings": settings.model_dump(), "filters": filters}
+    tag_current_run(
+        [f"caller:{caller}", f"collection:{collection_id}"],
+        {"caller": caller, "collection_id": collection_id, "query_id": query_id,
+         "effective_options": effective},
+    )
     key = answer_key(collection_id, collection.version, question, effective)
     started = time.perf_counter()
     with track_cache() as cache_counts:
@@ -215,8 +229,10 @@ def ask(
     return _run(state, query_id, answer_cache_key=key)
 
 
+@traceable(name="approve_sql")
 def approve_sql(query_id: str, approve: bool, *, caller: str) -> AskResult:
     """Resume a paused ask() run. Problems are returned as status "error", not raised."""
+    tag_current_run([f"caller:{caller}"], {"caller": caller, "query_id": query_id, "approve": approve})
     graph = get_graph()
     snapshot = graph.get_state(_thread(query_id))
     values = snapshot.values

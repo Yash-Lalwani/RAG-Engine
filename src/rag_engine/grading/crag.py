@@ -4,6 +4,7 @@ import hashlib
 import logging
 from typing import Literal, NamedTuple
 
+from langsmith import traceable
 from pydantic import BaseModel
 
 from rag_engine import llm, web_search
@@ -35,6 +36,7 @@ class CragOutcome(NamedTuple):
     warnings: list[str]
 
 
+@traceable(name="grade_chunks")
 def grade_chunks(query: str, chunks: list[SearchChunk]) -> list[SearchChunk]:
     """Return the chunks with `grade` and `grade_score` set, from one small-model call."""
     if not chunks:

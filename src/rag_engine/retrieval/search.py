@@ -4,6 +4,7 @@ import logging
 import time
 from typing import Any
 
+from langsmith import traceable
 from qdrant_client.models import ScoredPoint
 
 from rag_engine import collections
@@ -23,6 +24,7 @@ from rag_engine.retrieval.rerank import rerank
 logger = logging.getLogger(__name__)
 
 
+@traceable(name="search")
 def search(
     collection_id: str,
     query: str,

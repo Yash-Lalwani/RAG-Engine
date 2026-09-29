@@ -3,6 +3,8 @@
 from functools import lru_cache
 from typing import Literal
 
+from langsmith import traceable
+
 from rag_engine.config import settings
 from rag_engine.models import EngineError, Passage, RerankedPassage
 
@@ -25,6 +27,7 @@ def _voyage_client():
     return voyageai.Client(api_key=settings.voyage_api_key)
 
 
+@traceable(name="rerank")
 def rerank(
     query: str,
     passages: list[Passage],

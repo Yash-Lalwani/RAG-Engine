@@ -224,6 +224,15 @@ class TokenUsage(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     calls: int = 0
+    by_model: dict[str, dict[str, int]] = Field(default_factory=dict)  # {"gpt-4o": {"prompt": .., "completion": ..}}
+
+    def add(self, model: str, prompt_tokens: int, completion_tokens: int, calls: int = 1) -> None:
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+        self.calls += calls
+        per_model = self.by_model.setdefault(model, {"prompt": 0, "completion": 0})
+        per_model["prompt"] += prompt_tokens
+        per_model["completion"] += completion_tokens
 
     @computed_field
     @property

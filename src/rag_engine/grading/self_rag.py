@@ -3,6 +3,7 @@
 The retry loop itself is wired in the ask() graph; these are the plain steps it calls.
 """
 
+from langsmith import traceable
 from pydantic import BaseModel
 
 from rag_engine import llm
@@ -18,6 +19,7 @@ class _Scores(BaseModel):
     reason: str
 
 
+@traceable(name="self_check")
 def self_check(question: str, answer: str, chunks: list[SearchChunk]) -> SelfCheck:
     documents = spotlight_documents([(f"c{n}", c.source, c.text) for n, c in enumerate(chunks, 1)])
     scores = llm.generate_structured(

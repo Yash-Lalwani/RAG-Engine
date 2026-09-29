@@ -200,32 +200,32 @@ is off). Answers are generated with `gpt-4o`.
 | profile | recall@5 | MRR | faithfulness | answer relevancy | context precision | context recall | SQL match | web handled | latency | tokens / question |
 |---|---|---|---|---|---|---|---|---|---|---|
 | dense | 0.769 | 0.707 | 0.922 | 0.743 | 0.786 | 0.847 | 100% | 100% | 4.6 s | 2,720 |
-| sparse (BM25) | 0.661 | 0.617 | 0.920 | 0.780 | 0.718 | 0.833 | 100% | 100% | 2.8 s | 2,405 |
-| hybrid | 0.726 | 0.683 | 0.935 | 0.744 | 0.767 | 0.824 | 100% | 100% | 2.9 s | 2,400 |
-| **hybrid + rerank** | **0.823** | 0.801 | **0.951** | 0.772 | 0.791 | 0.870 | 100% | 100% | 3.1 s | 2,433 |
-| + HyDE | 0.823 | 0.801 | 0.933 | 0.779 | 0.764 | 0.884 | 100% | 100% | 4.9 s | 2,700 |
-| + CRAG (web fallback on) | 0.823 | **0.817** | 0.939 | **0.785** | 0.844 | 0.875 | 100% | 100% | 5.2 s | 3,778 |
-| + Self-RAG | 0.806 | 0.801 | 0.929 | 0.746 | 0.826 | 0.866 | 100% | 100% | 4.3 s | 3,940 |
-| all techniques | 0.806 | 0.817 | 0.931 | 0.778 | 0.923 | 0.861 | 100% | 100% | 7.7 s | 5,473 |
+| sparse (BM25) | 0.661 | 0.617 | 0.920 | 0.781 | 0.726 | 0.833 | 100% | 100% | 2.8 s | 2,405 |
+| hybrid | 0.726 | 0.683 | 0.936 | 0.744 | 0.770 | 0.824 | 100% | 100% | 2.9 s | 2,400 |
+| **hybrid + rerank** | **0.823** | 0.801 | **0.944** | 0.772 | 0.797 | 0.870 | 100% | 100% | 3.1 s | 2,433 |
+| + HyDE | 0.823 | 0.801 | 0.933 | 0.779 | 0.776 | **0.884** | 100% | 100% | 4.9 s | 2,700 |
+| + CRAG (web fallback on) | 0.823 | **0.817** | 0.939 | **0.788** | 0.823 | 0.875 | 100% | 100% | 5.2 s | 3,778 |
+| + Self-RAG | 0.806 | 0.801 | 0.929 | 0.746 | 0.802 | 0.866 | 100% | 100% | 4.3 s | 3,940 |
+| all techniques | 0.806 | 0.817 | 0.933 | 0.779 | **0.847** | 0.861 | 100% | 100% | 7.7 s | 5,473 |
 
 What the numbers show, and the defaults that follow from them:
 
 - **Reranking is the biggest single gain.** Adding the cross-encoder to hybrid search lifts recall@5
-  from 0.726 to 0.823 and MRR from 0.683 to 0.801, and gives the most faithful answers (0.951), for
+  from 0.726 to 0.823 and MRR from 0.683 to 0.801, and gives the most faithful answers (0.944), for
   about 0.3 s more per question. Reranking is on by default.
 - **Hybrid search needs the reranker.** On its own, hybrid is slightly behind dense search (0.726
   vs 0.769 recall), because BM25 also pulls in keyword matches from the noise articles. With the
   reranker sorting the combined candidates, hybrid is the best retrieval setup, so the default is
   `hybrid` with reranking.
 - **HyDE brings no benefit on this set.** Recall and MRR are identical to hybrid + rerank, faithfulness
-  is a little lower (0.933 vs 0.951), and each question takes 1.7 s longer and 11% more tokens.
+  is a little lower (0.933 vs 0.944), and each question takes 1.7 s longer and 11% more tokens.
   The questions are close enough to the documents' wording that hypothetical answers add nothing
   the reranker does not already fix. `hyde` is off by default.
 - **Self-RAG costs without benefit on this set.** Recall, faithfulness and answer relevancy are all
   slightly lower, and it uses 62% more tokens: most first answers already pass the self-check, so
   the retry rarely changes anything. `self_rag` is off by default.
 - **CRAG earns its place.** Dropping weakly relevant chunks gives the best MRR and answer relevancy
-  and clearly better context precision (0.844 vs 0.791), and it is what detects "not in the
+  and better context precision (0.823 vs 0.797), and it is what detects "not in the
   documents" and triggers the web fallback. It costs about 2 s per question. CRAG is on by default.
 - **`rrf_k` does not matter here.** Values of 10, 60 and 120 give identical top-5 documents
   (recall 0.726, MRR 0.683 for plain hybrid), so the default stays at the usual 60.
@@ -236,10 +236,10 @@ What the numbers show, and the defaults that follow from them:
   reference query's rows, and every web-only question was handled correctly, in every profile.
 
 Caveats: this is one run of 40 questions, and LLM-judged scores vary a little between runs.
-Some Ragas scores could not be computed because of API timeouts; most profiles have all or all
-but one to four of their 36 scored answers, but context precision for "all techniques" rests on
-26 of 36. A full run costs about $2.30 (answers $1.67, Ragas $0.64) and takes about 50 minutes
-plus scoring.
+Ragas scores cover all 36 answerable questions in every profile (the 4 web-only questions are
+checked by the "web handled" column instead). A full run costs about $2.40 (answers $1.67,
+Ragas $0.69) and takes about 50 minutes, plus scoring; `run_eval.py --rescore` fills in any
+scores that API timeouts leave missing.
 
 ## Design decisions
 

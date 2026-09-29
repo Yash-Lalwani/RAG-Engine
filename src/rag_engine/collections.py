@@ -1,5 +1,6 @@
 """Collection and document records in Postgres. Qdrant is handled by the callers."""
 
+import logging
 import re
 from typing import Any
 
@@ -8,6 +9,8 @@ from psycopg.types.json import Jsonb
 
 from rag_engine import db
 from rag_engine.models import Collection, CollectionSettings, DocumentRecord, EngineError
+
+logger = logging.getLogger(__name__)
 
 COLLECTION_ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
@@ -159,4 +162,13 @@ def _bump_version(conn, collection_id: str) -> None:
 
 
 def _to_collection(row: dict[str, Any]) -> Collection:
-    return Collection(**{**row, "settings": CollectionSettings.model_validate(row["settings"])})
+    return Collection(**{**row, "settings": stored_settings(row["id"], row["settings"])})
+
+
+def stored_settings(collection_id: str, stored: dict[str, Any]) -> CollectionSettings:
+    """Settings saved by an older version may contain keys that no longer exist; skip those
+    (with a warning) so the collection still loads. Unknown values of known keys still fail."""
+    unknown = sorted(set(stored) - set(CollectionSettings.model_fields))
+    if unknown:
+        logger.warning("Collection %r: ignoring stored settings that no longer exist: %s", collection_id, unknown)
+    return CollectionSettings.model_validate({k: v for k, v in stored.items() if k not in unknown})

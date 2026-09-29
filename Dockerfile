@@ -10,7 +10,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /usr/local/bin/uv
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 
-# Dependencies first so this layer is cached; no dev group (no Streamlit or pytest).
+# Dependencies first so this layer is cached; no dev group (no pytest or ruff).
 # uv's download cache lives in a build cache mount, not in the image.
 COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project

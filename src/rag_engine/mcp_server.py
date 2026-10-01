@@ -20,6 +20,7 @@ from pydantic import Field
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from rag_engine import config, engine
 from rag_engine.guardrails.api_keys import authenticate
@@ -253,17 +254,35 @@ async def healthz(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+class RejectGetStream:
+    """Answer GET /mcp with 405, which the MCP spec allows. In stateless mode the server never
+    sends anything on that stream, but its keep-alive pings would stop Railway putting the
+    Engine to sleep for as long as a client keeps it open. Clients work over POST without it."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope["method"] == "GET" and scope["path"].rstrip("/") == "/mcp":
+            response = JSONResponse({"error": "Method Not Allowed"}, status_code=405, headers={"Allow": "POST, DELETE"})
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 def build_app() -> Starlette:
     """The HTTP app: stateless MCP (no per-client session to lose on a restart), DNS-rebinding
     protection that also accepts the public hostnames, and room for 20 MB base64 uploads."""
     allowed = LOCAL_HOSTS + [h for host in config.settings.allowed_hosts for h in (host, f"{host}:*")]
-    return server.streamable_http_app(
+    app = server.streamable_http_app(
         stateless_http=True,
         max_request_body_size=MAX_REQUEST_BYTES,
         transport_security=TransportSecuritySettings(
             enable_dns_rebinding_protection=True, allowed_hosts=allowed
         ),
     )
+    app.add_middleware(RejectGetStream)
+    return app
 
 
 def warn_about_api_keys() -> None:

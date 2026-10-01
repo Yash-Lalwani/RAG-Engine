@@ -147,6 +147,13 @@ def test_healthz_needs_no_key(mcp_url):
     assert response.status_code == 200 and response.json() == {"status": "ok"}
 
 
+def test_get_stream_is_refused_so_idle_clients_cannot_keep_the_server_awake(mcp_url):
+    import httpx
+
+    response = httpx.get(mcp_url, headers={"Accept": "text/event-stream"}, timeout=5)
+    assert response.status_code == 405 and response.headers["allow"] == "POST, DELETE"
+
+
 def test_uploads_larger_than_the_default_4mb_are_accepted(call, monkeypatch):
     import base64
 

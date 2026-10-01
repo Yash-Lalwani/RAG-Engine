@@ -18,6 +18,15 @@ COPY src ./src
 COPY scripts ./scripts
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
 
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    HF_HOME=/models/huggingface \
+    FASTEMBED_CACHE_PATH=/models/fastembed \
+    DOCLING_ARTIFACTS_PATH=/models/docling
+
+# Download every local model now (about 1.5 GB), so the server never downloads at start-up.
+RUN docling-tools models download layout tableformer rapidocr -o /models/docling \
+    && python scripts/download_models.py
+ENV HF_HUB_OFFLINE=1
+
 EXPOSE 8000
 CMD ["python", "-m", "rag_engine.mcp_server"]

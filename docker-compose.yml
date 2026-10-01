@@ -37,14 +37,10 @@ services:
       SQL_DATABASES: k8s_ops=postgresql://readonly:readonly@postgres:5432/k8s_ops
       MCP_HOST: 0.0.0.0
       INGEST_DIR: /app/data
-      # Downloaded models (about 2 GB) live on a volume so rebuilds do not download them again
-      HF_HOME: /models/huggingface
-      FASTEMBED_CACHE_PATH: /models/fastembed
     ports:
       - "8000:8000"
     volumes:
       - ./data:/app/data:ro
-      - models:/models
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,4 +50,3 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
-  models:

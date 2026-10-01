@@ -68,3 +68,15 @@ def test_setup_removes_abandoned_runs(hybrid_collection):
     graph.update_state(engine._thread(pending.query_id), {"created_at": "2020-01-01T00:00:00+00:00"})
     engine.setup()
     assert graph.get_state(engine._thread(pending.query_id)).values == {}
+
+
+def test_paused_run_survives_postgres_dropping_its_connections(hybrid_collection):
+    pending = engine.ask(hybrid_collection, "How many pods are pending and why?", caller="dev")
+    with psycopg.connect(settings.database_url, autocommit=True) as admin:
+        killed = admin.execute(
+            "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity "
+            "WHERE datname = 'rag_engine' AND pid <> pg_backend_pid()"
+        ).fetchone()[0]
+    assert killed >= 1  # the checkpointer's pooled connection was among them
+    done = engine.approve_sql(pending.query_id, True, caller="dev")
+    assert done.status == "completed"

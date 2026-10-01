@@ -2,11 +2,11 @@
 
 from functools import lru_cache
 
-import psycopg
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from rag_engine.config import settings
 from rag_engine.grading.self_rag import should_retry
@@ -58,11 +58,17 @@ def build_graph(checkpointer: BaseCheckpointSaver):
 
 @lru_cache
 def get_graph():
-    """The graph with a Postgres checkpointer (used only while a run waits for SQL approval)."""
-    connection = psycopg.connect(
-        settings.database_url, autocommit=True, prepare_threshold=0, row_factory=dict_row
+    """The graph with a Postgres checkpointer (used only while a run waits for SQL approval).
+    A small pool replaces connections the database has closed (idle timeouts, restarts)."""
+    pool = ConnectionPool(
+        settings.database_url,
+        min_size=1,
+        max_size=5,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        check=ConnectionPool.check_connection,
+        open=True,
     )
-    checkpointer = PostgresSaver(connection)
+    checkpointer = PostgresSaver(pool)
     checkpointer.setup()
     return build_graph(checkpointer)
 

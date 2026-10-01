@@ -1,6 +1,7 @@
 -- Read-only role used by Text2SQL. It can read the 7 demo tables and nothing else.
+-- Run with psql and pass the password: psql -v readonly_password=... -f 002_readonly_role.sql
 
-CREATE ROLE readonly LOGIN PASSWORD 'readonly';
+CREATE ROLE readonly LOGIN PASSWORD :'readonly_password';
 
 REVOKE CONNECT, TEMPORARY ON DATABASE rag_engine FROM PUBLIC;
 REVOKE TEMPORARY ON DATABASE k8s_ops FROM PUBLIC;

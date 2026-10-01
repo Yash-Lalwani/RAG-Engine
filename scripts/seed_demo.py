@@ -4,6 +4,7 @@ corpus in data/noise/, if it has been built). Safe to re-run.
 Run from the repository root: uv run python scripts/seed_demo.py
 """
 
+import argparse
 import logging
 from pathlib import Path
 
@@ -23,6 +24,9 @@ SETTINGS = {
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-noise", action="store_true", help="skip the evaluation noise documents")
+    args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
     engine.setup()
 
@@ -32,7 +36,7 @@ def main() -> None:
         engine.create_collection(COLLECTION_ID, "Kubernetes demo", settings=SETTINGS)
 
     files = sorted(p for p in DOCS_DIR.iterdir() if p.is_file() and not p.name.startswith("."))
-    if NOISE_DIR.exists():  # built by scripts/build_noise_corpus.py for the evaluation
+    if NOISE_DIR.exists() and not args.no_noise:  # built by scripts/build_noise_corpus.py for the eval
         files += sorted(NOISE_DIR.glob("*.txt"))
     counts: dict[str, int] = {}
     for number, path in enumerate(files, start=1):

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
 
     qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
     database_url: str = "postgresql://rag:rag@localhost:5432/rag_engine"
     sql_databases: str = "k8s_ops=postgresql://readonly:readonly@localhost:5432/k8s_ops"
 
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
 
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8000
+    mcp_allowed_hosts: str = ""  # public hostnames, e.g. "rag.example.com"; localhost is always allowed
     docling_device: str = "auto"
     ingest_dir: str = "data"
 
@@ -45,6 +47,10 @@ class Settings(BaseSettings):
     @property
     def sql_database_urls(self) -> dict[str, str]:
         return parse_sql_databases(self.sql_databases)
+
+    @property
+    def allowed_hosts(self) -> list[str]:
+        return [host.strip() for host in self.mcp_allowed_hosts.split(",") if host.strip()]
 
 
 def parse_api_keys(raw: str) -> dict[str, str]:

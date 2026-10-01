@@ -22,7 +22,7 @@ _POINT_ID_NAMESPACE = uuid.UUID("5b8c6f1e-2f0a-4d8e-9c1b-7a3e4d2f6b10")
 
 @lru_cache
 def get_client() -> QdrantClient:
-    return QdrantClient(url=settings.qdrant_url, timeout=30)
+    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None, timeout=30)
 
 
 def ping() -> bool:

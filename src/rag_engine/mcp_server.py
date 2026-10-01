@@ -15,12 +15,17 @@ import uvicorn
 from langsmith import tracing_context
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import Field
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from rag_engine import config, engine
 from rag_engine.guardrails.api_keys import authenticate
 from rag_engine.guardrails.rate_limit import check_rate_limit
 from rag_engine.guardrails.token_budget import check_budget, record_usage
+from rag_engine.ingestion.pipeline import MAX_DOCUMENT_BYTES
 from rag_engine.llm import track_usage
 from rag_engine.models import (
     AskResult,
@@ -40,6 +45,10 @@ from rag_engine.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+LOCAL_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+# A document of MAX_DOCUMENT_BYTES is about a third larger as base64, plus the JSON around it.
+MAX_REQUEST_BYTES = int(MAX_DOCUMENT_BYTES * 1.4) + 1024 * 1024
 
 Question = Annotated[str, Field(min_length=1, max_length=2000)]
 Options = Annotated[
@@ -238,6 +247,25 @@ def approve_sql(ctx: Context, query_id: str, approve: bool) -> AskResult:
     )
 
 
+@server.custom_route("/healthz", methods=["GET"], include_in_schema=False)
+async def healthz(request: Request) -> JSONResponse:
+    """Liveness check for the hosting platform: the process is up. Needs no key, calls nothing."""
+    return JSONResponse({"status": "ok"})
+
+
+def build_app() -> Starlette:
+    """The HTTP app: stateless MCP (no per-client session to lose on a restart), DNS-rebinding
+    protection that also accepts the public hostnames, and room for 20 MB base64 uploads."""
+    allowed = LOCAL_HOSTS + [h for host in config.settings.allowed_hosts for h in (host, f"{host}:*")]
+    return server.streamable_http_app(
+        stateless_http=True,
+        max_request_body_size=MAX_REQUEST_BYTES,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True, allowed_hosts=allowed
+        ),
+    )
+
+
 def warn_about_api_keys() -> None:
     callers = config.settings.api_key_callers
     if not callers:
@@ -252,9 +280,7 @@ def main() -> None:
     warn_about_api_keys()
     engine.setup()
     engine.warm_up()
-    uvicorn.run(
-        server.streamable_http_app(), host=config.settings.mcp_host, port=config.settings.mcp_port
-    )
+    uvicorn.run(build_app(), host=config.settings.mcp_host, port=config.settings.mcp_port)
 
 
 if __name__ == "__main__":

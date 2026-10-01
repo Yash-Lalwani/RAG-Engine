@@ -125,3 +125,40 @@ def test_the_key_decides_the_caller_and_approve_sql_is_guarded(call, fake_engine
     done = call("approve_sql", {"query_id": "q1", "approve": True})
     assert done.structured_content["answer"] == "1 row. [1]"
     assert fake_engine == [("ask", "astra"), ("approve_sql", "dev")]
+
+
+INITIALIZE = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}
+MCP_HEADERS = {"Accept": "application/json, text/event-stream", "Content-Type": "application/json"}
+
+
+@pytest.mark.parametrize(("host", "accepted"), [("rag.example.test", True), ("evil.example.com", False)])
+def test_only_allowed_hosts_reach_the_mcp_endpoint(mcp_url, host, accepted):
+    import httpx
+
+    response = httpx.post(mcp_url, json=INITIALIZE, headers={**MCP_HEADERS, "Host": host})
+    assert (response.status_code == 200) is accepted, response.status_code
+
+
+def test_healthz_needs_no_key(mcp_url):
+    import httpx
+
+    response = httpx.get(mcp_url.replace("/mcp", "/healthz"))
+    assert response.status_code == 200 and response.json() == {"status": "ok"}
+
+
+def test_uploads_larger_than_the_default_4mb_are_accepted(call, monkeypatch):
+    import base64
+
+    from rag_engine.models import IngestResult
+
+    seen = {}
+
+    def fake_ingest(collection_id, file_path=None, content_base64=None, filename=None, doc_id=None, metadata=None):
+        seen["bytes"] = len(base64.b64decode(content_base64))
+        return IngestResult(collection_id=collection_id, doc_id=filename, status="ingested", chunk_count=1)
+
+    monkeypatch.setattr(engine, "ingest_document", fake_ingest)
+    content = base64.b64encode(b"x" * 6_000_000).decode()
+    result = call("ingest_document", {"collection_id": "k8s-demo", "content_base64": content, "filename": "big.txt"})
+    assert not result.is_error and seen["bytes"] == 6_000_000

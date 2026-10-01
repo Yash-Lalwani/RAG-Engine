@@ -79,9 +79,9 @@ uv run python scripts/seed_demo.py          # create and ingest the k8s-demo col
 docker compose up -d --build engine         # the MCP server on http://localhost:8000/mcp
 ```
 
-The first start of the `engine` container downloads about 1.5 GB of local models (reranker, BM25,
-guardrail classifiers) into a Docker volume; later starts reuse them. To run the server without
-Docker instead: `uv run python -m rag_engine.mcp_server`.
+Building the `engine` image downloads about 1.5 GB of local models (reranker, BM25, guardrail
+classifiers, Docling's layout models) into the image, so the server starts without downloading
+anything. To run the server without Docker instead: `uv run python -m rag_engine.mcp_server`.
 
 ### Connect Claude Desktop
 
@@ -265,6 +265,35 @@ scores that API timeouts leave missing.
 - **Stateless Engine.** It stores documents, settings, caches, counters and runs paused for
   approval, but no users, conversations or memory; those belong to the applications that call it.
 
+## Deployment
+
+The Engine runs anywhere the Docker image runs. The hosted setup uses Railway for the Engine and
+Postgres, Qdrant Cloud for vectors and Upstash for Redis. `railway.json` tells Railway to build the
+`Dockerfile`, check `/healthz` and redeploy on every push to `main` that touches the code.
+
+1. **Services.** Create a Railway project with this repository as a service plus a Postgres
+   database, a Qdrant Cloud cluster and an Upstash Redis database.
+2. **Postgres.** Create the Engine database and the demo SQL data, using Railway's public
+   Postgres URL:
+   ```bash
+   psql "$ADMIN_URL" -c "CREATE DATABASE rag_engine" -c "CREATE DATABASE k8s_ops"
+   psql "$ADMIN_URL_K8S_OPS" -q -f data/sql/001_k8s_ops.sql
+   psql "$ADMIN_URL_K8S_OPS" -v readonly_password="$READONLY_PASSWORD" -f data/sql/002_readonly_role.sql
+   ```
+3. **Variables.** Set the same variables as `.env.example` on the Railway service:
+   `OPENAI_API_KEY`, `QDRANT_URL` and `QDRANT_API_KEY`, `DATABASE_URL` and `SQL_DATABASES`
+   (Railway's private Postgres URLs), the Upstash URL and token, `ENGINE_API_KEYS` (new random
+   keys), `DAILY_TOKEN_BUDGET`, the LangSmith settings and `MCP_ALLOWED_HOSTS` (the public
+   hostname). Keep a copy in `.env.production`, which is gitignored, with the public Postgres URLs.
+4. **Seed** the demo collection from your machine (the Kubernetes documents only):
+   ```bash
+   uv run --env-file .env.production python scripts/seed_demo.py --no-noise
+   ```
+5. **Domain.** Add the custom domain to the Railway service and create both DNS records it
+   shows (a CNAME and a TXT record). Behind Cloudflare's proxy, set SSL/TLS to *Full*.
+6. **Connect** Claude Desktop as above, with `https://<your domain>/mcp` as the URL and one of the
+   production keys.
+
 ## Development
 
 ```bash
@@ -292,7 +321,7 @@ src/rag_engine/
   guardrails/        API keys, input and output checks, rate limit, token budget, spotlighting
   cache/             cache store and keys
 eval/                goldens, metrics, profiles, run_eval.py, diff.py
-scripts/             seed_demo.py, build_noise_corpus.py
+scripts/             seed_demo.py, build_noise_corpus.py, download_models.py
 data/                demo documents and SQL
 ```
 

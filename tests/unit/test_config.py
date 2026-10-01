@@ -45,3 +45,8 @@ def test_settings_read_environment(monkeypatch):
     assert settings.api_key_callers == {"abc": "dev"}
     assert settings.sql_database_urls == {"k8s_ops": "postgresql://ro@db/k8s_ops"}
     assert settings.rate_limit_per_minute == 7
+
+
+def test_allowed_hosts_are_parsed(monkeypatch):
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", " rag.example.com, app.up.railway.app ,")
+    assert Settings(_env_file=None).allowed_hosts == ["rag.example.com", "app.up.railway.app"]

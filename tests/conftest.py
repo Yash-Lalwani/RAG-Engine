@@ -8,7 +8,7 @@ import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
-from rag_engine.mcp_server import server
+from rag_engine.mcp_server import build_app
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -23,11 +23,15 @@ def no_tracing():
 
 @pytest.fixture(scope="session")
 def mcp_url():
-    """The MCP server running in a background thread on a free local port."""
+    """The MCP server running in a background thread on a free local port. It also accepts the
+    public hostname rag.example.test, to test the allowed-hosts setting."""
+    from rag_engine.config import settings
+
+    settings.mcp_allowed_hosts = "rag.example.test"
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-    http_server = uvicorn.Server(uvicorn.Config(server.streamable_http_app(), port=port, log_level="warning"))
+    http_server = uvicorn.Server(uvicorn.Config(build_app(), port=port, log_level="warning"))
     threading.Thread(target=http_server.run, daemon=True).start()
     while not http_server.started:
         time.sleep(0.05)

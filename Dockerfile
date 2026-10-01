@@ -11,12 +11,12 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
 
 # Dependencies first so this layer is cached; no dev group (no pytest or ruff).
-# uv's download cache lives in a build cache mount, not in the image.
+# --no-cache keeps uv's download cache out of the image. (Railway rejects cache mounts without its own ids.)
 COPY pyproject.toml uv.lock README.md ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --no-cache
 COPY src ./src
 COPY scripts ./scripts
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-cache
 
 ENV PATH="/app/.venv/bin:$PATH" \
     HF_HOME=/models/huggingface \

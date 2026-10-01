@@ -59,11 +59,14 @@ def build_graph(checkpointer: BaseCheckpointSaver):
 @lru_cache
 def get_graph():
     """The graph with a Postgres checkpointer (used only while a run waits for SQL approval).
-    A small pool replaces connections the database has closed (idle timeouts, restarts)."""
+    A small pool replaces connections the database has closed (idle timeouts, restarts).
+    It keeps no connection while idle (min_size=0) and closes an unused one each minute
+    (max_idle), so a quiet server holds no open connections and Railway can put it to sleep."""
     pool = ConnectionPool(
         settings.database_url,
-        min_size=1,
+        min_size=0,
         max_size=5,
+        max_idle=60,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
         check=ConnectionPool.check_connection,
         open=True,

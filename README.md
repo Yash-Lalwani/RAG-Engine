@@ -268,13 +268,16 @@ scores that API timeouts leave missing.
 ## Deployment
 
 The Engine runs anywhere the Docker image runs. The hosted setup uses Railway for the Engine and
-Postgres, Qdrant Cloud for vectors and Upstash for Redis. `railway.json` tells Railway to build the
-`Dockerfile`, check `/healthz` and redeploy on every push to `main` that touches the code.
+Postgres, Qdrant Cloud for vectors and Upstash for Redis. Railway builds the `Dockerfile` and
+redeploys on every push to `main`.
 
 1. **Services.** Create a Railway project with this repository as a service plus a Postgres
-   database, a Qdrant Cloud cluster and an Upstash Redis database.
-2. **Postgres.** Create the Engine database and the demo SQL data, using Railway's public
-   Postgres URL:
+   database, a Qdrant Cloud cluster and an Upstash Redis database. In the Engine service's
+   settings, set the health check path to `/healthz` and turn on Serverless, so the Engine sleeps
+   when idle and wakes on the next request (the first request after a sleep is slow). The
+   checkpointer's connection pool closes idle connections, so nothing keeps the Engine awake.
+2. **Postgres.** Add a TCP proxy to the Postgres service for a public URL, then create the Engine
+   database and the demo SQL data:
    ```bash
    psql "$ADMIN_URL" -c "CREATE DATABASE rag_engine" -c "CREATE DATABASE k8s_ops"
    psql "$ADMIN_URL_K8S_OPS" -q -f data/sql/001_k8s_ops.sql
@@ -283,8 +286,9 @@ Postgres, Qdrant Cloud for vectors and Upstash for Redis. `railway.json` tells R
 3. **Variables.** Set the same variables as `.env.example` on the Railway service:
    `OPENAI_API_KEY`, `QDRANT_URL` and `QDRANT_API_KEY`, `DATABASE_URL` and `SQL_DATABASES`
    (Railway's private Postgres URLs), the Upstash URL and token, `ENGINE_API_KEYS` (new random
-   keys), `DAILY_TOKEN_BUDGET`, the LangSmith settings and `MCP_ALLOWED_HOSTS` (the public
-   hostname). Keep a copy in `.env.production`, which is gitignored, with the public Postgres URLs.
+   keys), `DAILY_TOKEN_BUDGET`, the LangSmith settings, `MCP_ALLOWED_HOSTS` (the public
+   hostname) and `PORT=8000` (Railway sends its health checks to `PORT`). Keep a copy in
+   `.env.production`, which is gitignored, with the public Postgres URLs.
 4. **Seed** the demo collection from your machine (the Kubernetes documents only):
    ```bash
    uv run --env-file .env.production python scripts/seed_demo.py --no-noise

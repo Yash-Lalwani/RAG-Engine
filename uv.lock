@@ -1934,6 +1934,7 @@ source = { editable = "." }
 dependencies = [
     { name = "docling" },
     { name = "fastembed" },
+    { name = "httpx" },
     { name = "langgraph" },
     { name = "langgraph-checkpoint-postgres" },
     { name = "mcp" },
@@ -1967,6 +1968,7 @@ dev = [
 requires-dist = [
     { name = "docling", specifier = ">=2.130.0" },
     { name = "fastembed", specifier = ">=0.8.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langgraph", specifier = ">=1.2.12" },
     { name = "langgraph-checkpoint-postgres", specifier = ">=3.1.2" },
     { name = "mcp", specifier = ">=2.2" },

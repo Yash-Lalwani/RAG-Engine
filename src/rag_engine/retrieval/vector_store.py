@@ -4,6 +4,7 @@ import uuid
 from functools import lru_cache
 from typing import Any
 
+import httpx
 from qdrant_client import QdrantClient, models
 
 from rag_engine.config import settings
@@ -22,7 +23,14 @@ _POINT_ID_NAMESPACE = uuid.UUID("5b8c6f1e-2f0a-4d8e-9c1b-7a3e4d2f6b10")
 
 @lru_cache
 def get_client() -> QdrantClient:
-    return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None, timeout=30)
+    """No idle keep-alive connections: Qdrant Cloud probes an idle connection every few minutes,
+    and answering those probes would keep an otherwise quiet server awake on Railway."""
+    return QdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key or None,
+        timeout=30,
+        limits=httpx.Limits(max_keepalive_connections=0),
+    )
 
 
 def ping() -> bool:
